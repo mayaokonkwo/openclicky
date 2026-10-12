@@ -6,6 +6,8 @@
 - **Ask:** tap **left ctrl twice**, type a question about what is on your screen, press Enter. The
   orange pointer beside your mouse answers in a caption and flies to what it is talking about.
   Esc dismisses the answer. Follow-ups remember the last ten exchanges.
+- **The pointer** follows the mouse always, only while the mouse moves, only after you **shake the
+  mouse**, or only while answering (Settings → Show the pointer).
 - **Settings and the tray icon:** Ask…, Settings…, Quit.
 
 Not on Linux yet: spoken answers, asking by voice, the agent lane.
@@ -21,12 +23,13 @@ Not on Linux yet: spoken answers, asking by voice, the agent lane.
   saved in `~/.openclicky/shell.json`, the file the Mac app and the CLI read, and every other key in
   it is left alone:
   - dictation: an **OpenAI key**, or an **OpenClicky account** token
-  - answers: an **Anthropic key**, else the OpenAI key, else the account
+  - answers: an **Anthropic key**, else an **OpenRouter key** (Claude Sonnet 4.6 unless
+    `answerModels.openrouter` in shell.json names another), else the OpenAI key, else the account
 
   An own key goes straight to its vendor and never to the backend. The language pins dictation and
   answers; the dictation key can be right ctrl, right alt, right super or the menu key (a modifier
   is best, since other keys auto-repeat); the pointer can stay beside the mouse or show only while
-  answering.
+  answering, or appear only while the mouse moves or after a shake.
 
 ## Run
 
@@ -65,15 +68,21 @@ they are skipped without it. They run the real app wiring end to end with XTEST 
 take lands in a GTK text box; left ctrl twice opens the ask box, a typed question goes out with a
 real screenshot to a stand-in model, and the pointer lands on the button it named; Settings saves
 into shell.json; the pointer is checked to be cut to its triangle and click-through.
-`OPENCLICKY_SCREENSHOT_DIR=<folder>` keeps screenshots of each scenario.
+A shake with the real mouse wakes a hidden pointer. `OPENCLICKY_SCREENSHOT_DIR=<folder>` keeps
+screenshots of each scenario.
+
+`OPENCLICKY_LIVE=1` adds one test that spends your own key (three requests): real questions about a
+test window on the private display (only its screenshot is sent), checking that the pointer lands on
+the Save and Delete buttons and stays put for "what is the capital of france?".
 
 ## How it is put together
 
 | File | Purpose |
 |---|---|
 | `companion.py` | Asking by text, one question at a time: the ask box, the screenshot, the answer, the pointer's flight and caption; a new question or esc drops an unanswered one. Reaches the desktop only through `AskHost` and `PointerSurface`. |
-| `ask.py` | The question + screenshot to a model: own Anthropic key → Messages; own OpenAI key → chat completions; account → backend `POST /chat`. The Mac's ask prompt, for a read (not spoken) answer. |
+| `ask.py` | The question + screenshot to a model, in the Mac's order: own Anthropic key → Messages; OpenRouter key → its chat completions; own OpenAI key → chat completions; account → backend `POST /chat`. The Mac's ask prompt, for a read (not spoken) answer. |
 | `pointing.py` | The `[POINT:x,y:label]` tag (the Mac's parser, ported), screenshot → screen coordinates, the arc and timing of a flight. |
+| `presence.py` | When the following pointer shows: the Mac's `PointerPresence` (always, while moving, after a shake, with its shake detector) ported with its tests, plus "only while answering". |
 | `pointer_view.py` | The pointer (an orange window cut to a triangle with SHAPE, click-through) and its typed-out caption; follows the mouse, flies, comes back. |
 | `windows.py` | The ask box, the Settings window, the tray icon. |
 | `screen.py` | The screenshot (whole screen, longest side ≤ 1568 px, PNG, with its scale). |

@@ -1,10 +1,11 @@
 """Settings, read from the same `~/.openclicky/shell.json` the Mac app and the CLI use.
 
-Keys read here: `openaiApiKey` and `anthropicApiKey` (own keys, sent straight to their vendor),
+Keys read here: `openaiApiKey`, `anthropicApiKey` and `openRouterApiKey` (own keys, sent straight
+to their vendor; `answerModels.openrouter` picks the OpenRouter model, as on the Mac),
 `token` and `backendUrl` (an OpenClicky account, the fallback), `language` (dictation and answers;
 English when unset), and the Linux-only `linuxDictationKey` (an X keysym name, `Control_R` by
-default: Linux never sees fn) and `linuxPointer` ("always", or "whenAnswering": out of sight until
-an answer). `BACKEND_URL`, `OPENCLICKY_OPENAI_KEY` and `OPENCLICKY_ANTHROPIC_KEY` in the
+default: Linux never sees fn) and `linuxPointer` ("always", "whileMoving", "onShake", or
+"whenAnswering": see `presence.py`). `BACKEND_URL`, `OPENCLICKY_OPENAI_KEY` and `OPENCLICKY_ANTHROPIC_KEY` in the
 environment win over the file, as on the Mac.
 
 `save_settings` writes the Settings window's fields back and leaves every other key as it was: the
@@ -21,7 +22,7 @@ from pathlib import Path
 
 HOSTED_BACKEND_URL = "https://api.openclicky.flowsxr.com"
 DEFAULT_DICTATION_KEY = "Control_R"
-POINTER_PRESENCES = ("always", "whenAnswering")
+POINTER_PRESENCES = ("always", "whileMoving", "onShake", "whenAnswering")
 
 
 def openclicky_directory() -> Path:
@@ -32,6 +33,8 @@ def openclicky_directory() -> Path:
 class LinuxSettings:
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
+    openrouter_api_key: str | None = None
+    openrouter_model: str | None = None
     account_token: str | None = None
     backend_url: str = HOSTED_BACKEND_URL
     language_code: str | None = None
@@ -66,6 +69,8 @@ def load_settings(shell_json_path: Path | None = None, environment: dict[str, st
     return LinuxSettings(
         openai_api_key=_cleaned(environment.get("OPENCLICKY_OPENAI_KEY")) or _cleaned(raw.get("openaiApiKey")),
         anthropic_api_key=_cleaned(environment.get("OPENCLICKY_ANTHROPIC_KEY")) or _cleaned(raw.get("anthropicApiKey")),
+        openrouter_api_key=_cleaned(environment.get("OPENCLICKY_OPENROUTER_KEY")) or _cleaned(raw.get("openRouterApiKey")),
+        openrouter_model=_cleaned((raw.get("answerModels") or {}).get("openrouter")) if isinstance(raw.get("answerModels"), dict) else None,
         account_token=_cleaned(raw.get("token")),
         backend_url=backend_url.rstrip("/"),
         language_code=_cleaned(raw.get("language")),
@@ -78,6 +83,7 @@ def load_settings(shell_json_path: Path | None = None, environment: dict[str, st
 SETTINGS_FIELDS = {
     "openai_api_key": "openaiApiKey",
     "anthropic_api_key": "anthropicApiKey",
+    "openrouter_api_key": "openRouterApiKey",
     "account_token": "token",
     "backend_url": "backendUrl",
     "language_code": "language",

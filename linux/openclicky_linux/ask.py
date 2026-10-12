@@ -1,10 +1,11 @@
 """Asking about the screen by text: the question and a screenshot go to a model, which answers in a
 sentence or two and may start with a `[POINT:…]` tag the pointer flies to.
 
-Routed like the Mac app's ask lane: the person's own Anthropic key straight to Anthropic (Messages,
-the Mac's default model), else an own OpenAI key to OpenAI chat completions, else the OpenClicky
-account through the backend's `POST /chat` (the same Messages body the Mac relays), else a sentence
-naming what is missing. Own keys never go to the backend. Answers are not streamed: they are short,
+Routed in the Mac app's order (`ProviderCredentials.answerSourcesInOrder`): the person's own
+Anthropic key straight to Anthropic (Messages, the Mac's default model), else an own OpenRouter key
+(OpenAI-style chat completions, the Mac's OpenRouter model unless `answerModels.openrouter` names
+another), else an own OpenAI key to OpenAI chat completions, else the OpenClicky account through the
+backend's `POST /chat` (the same Messages body the Mac relays), else a sentence naming what is missing. Own keys never go to the backend. Answers are not streamed: they are short,
 and the caption shows them whole.
 """
 
@@ -23,6 +24,8 @@ ANTHROPIC_VERSION = "2023-06-01"
 ANTHROPIC_MODEL = "claude-sonnet-4-6"
 OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_MODEL = "gpt-4.1"
+OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6"
 MAX_ANSWER_TOKENS = 400
 REQUEST_TIMEOUT_SECONDS = 60
 # Exchanges kept for follow-ups ("and where is that?"), as on the Mac.
@@ -72,7 +75,7 @@ class Screenshot:
 
 @dataclass(frozen=True)
 class AskRequest:
-    kind: str  # "anthropic" | "openai" | "backend"
+    kind: str  # "anthropic" | "openrouter" | "openai" | "backend"
     request: urllib.request.Request
 
 
@@ -102,7 +105,8 @@ def _anthropic_body(question: str, screenshot: Screenshot, conversation: Convers
     return {"model": ANTHROPIC_MODEL, "max_tokens": MAX_ANSWER_TOKENS, "system": _with_language(settings), "messages": messages}
 
 
-def _openai_body(question: str, screenshot: Screenshot, conversation: Conversation, settings: LinuxSettings) -> dict:
+def _openai_body(question: str, screenshot: Screenshot, conversation: Conversation, settings: LinuxSettings,
+                 model: str = OPENAI_MODEL) -> dict:
     messages: list[dict] = [{"role": "system", "content": _with_language(settings)}]
     for earlier_question, earlier_answer in conversation.exchanges:
         messages += [{"role": "user", "content": earlier_question}, {"role": "assistant", "content": earlier_answer}]
@@ -111,7 +115,7 @@ def _openai_body(question: str, screenshot: Screenshot, conversation: Conversati
         {"type": "image_url", "image_url": {"url": image_url}},
         {"type": "text", "text": f"screen 1 (primary focus, {screenshot.width}x{screenshot.height} pixels)\n\n{question}"},
     ]})
-    return {"model": OPENAI_MODEL, "max_tokens": MAX_ANSWER_TOKENS, "messages": messages}
+    return {"model": model, "max_tokens": MAX_ANSWER_TOKENS, "messages": messages}
 
 
 def request_for(question: str, screenshot: Screenshot, conversation: Conversation, settings: LinuxSettings) -> AskRequest:
@@ -119,6 +123,13 @@ def request_for(question: str, screenshot: Screenshot, conversation: Conversatio
         body = json.dumps(_anthropic_body(question, screenshot, conversation, settings)).encode()
         return AskRequest("anthropic", urllib.request.Request(ANTHROPIC_MESSAGES_URL, data=body, method="POST", headers={
             "x-api-key": settings.anthropic_api_key, "anthropic-version": ANTHROPIC_VERSION, "Content-Type": "application/json"}))
+    if settings.openrouter_api_key:
+        model = settings.openrouter_model or OPENROUTER_MODEL
+        body = json.dumps(_openai_body(question, screenshot, conversation, settings, model=model)).encode()
+        return AskRequest("openrouter", urllib.request.Request(OPENROUTER_CHAT_URL, data=body, method="POST", headers={
+            "Authorization": f"Bearer {settings.openrouter_api_key}", "Content-Type": "application/json",
+            # OpenRouter's app attribution headers: shown on its dashboard, never needed to answer.
+            "HTTP-Referer": "https://openclicky.flowsxr.com", "X-Title": "OpenClicky for Linux"}))
     if settings.openai_api_key:
         body = json.dumps(_openai_body(question, screenshot, conversation, settings)).encode()
         return AskRequest("openai", urllib.request.Request(OPENAI_CHAT_URL, data=body, method="POST", headers={
@@ -127,11 +138,11 @@ def request_for(question: str, screenshot: Screenshot, conversation: Conversatio
         body = json.dumps(_anthropic_body(question, screenshot, conversation, settings)).encode()
         return AskRequest("backend", urllib.request.Request(f"{settings.backend_url}/chat", data=body, method="POST", headers={
             "Authorization": f"Bearer {settings.account_token}", "anthropic-version": ANTHROPIC_VERSION, "Content-Type": "application/json"}))
-    raise AskError("asking needs an anthropic or openai key, or an openclicky account. add one in settings.")
+    raise AskError("asking needs an anthropic, openrouter or openai key, or an openclicky account. add one in settings.")
 
 
 def answer_text(kind: str, response: dict) -> str:
-    if kind == "openai":
+    if kind in ("openai", "openrouter"):
         choices = response.get("choices") or []
         content = choices[0].get("message", {}).get("content") if choices else None
         return content.strip() if isinstance(content, str) else ""
@@ -141,7 +152,7 @@ def answer_text(kind: str, response: dict) -> str:
 
 def ask(question: str, screenshot: Screenshot, conversation: Conversation, settings: LinuxSettings) -> str:
     routed = request_for(question, screenshot, conversation, settings)
-    vendor = {"anthropic": "anthropic", "openai": "openai", "backend": "the openclicky backend"}[routed.kind]
+    vendor = {"anthropic": "anthropic", "openrouter": "openrouter", "openai": "openai", "backend": "the openclicky backend"}[routed.kind]
     try:
         with urllib.request.urlopen(routed.request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
             answer = json.loads(response.read().decode("utf-8"))
@@ -150,6 +161,8 @@ def ask(question: str, screenshot: Screenshot, conversation: Conversation, setti
             raise AskError(f"{vendor} refused the key or token. check it in settings.") from refusal
         if refusal.code == 402 and routed.kind == "backend":
             raise AskError("your openclicky allowance is used up for now.") from refusal
+        if refusal.code == 402:
+            raise AskError(f"{vendor} says the key is out of credit.") from refusal
         raise AskError(f"{vendor} couldn't answer ({refusal.code}).") from refusal
     except (urllib.error.URLError, TimeoutError, OSError) as failure:
         raise AskError(f"couldn't reach {vendor}.") from failure

@@ -106,3 +106,27 @@ def test_settings_show_the_routes_and_save_into_shell_json(private_display, tmp_
     assert outcome["status"].startswith("Saved.")
     assert outcome["pointer_presence_now"] == "whenAnswering"
     assert not outcome["pointer_visible_while_following"]
+
+
+def test_shake_to_appear_with_the_real_mouse(private_display):
+    assert run_scenario("shake_to_appear", private_display) == {
+        "at_start": False, "after_a_plain_move": False, "after_a_shake": True, "after_resting": False,
+        "while_moving_after_rest": True, "while_moving_after_a_nudge": True}
+
+
+@pytest.mark.skipif(os.environ.get("OPENCLICKY_LIVE") != "1", reason="live: spends the person's own key; set OPENCLICKY_LIVE=1")
+def test_live_a_real_model_points_at_the_right_button(private_display):
+    """Real questions through the key in ~/.openclicky/shell.json, about a test window on the private
+    display (only that display's screenshot is sent). Three requests."""
+    environment_questions = ["where do i save this?", "how do i get rid of this note?", "what is the capital of france?"]
+    os.environ["OPENCLICKY_LIVE_QUESTIONS"] = json.dumps(environment_questions)
+    outcome = run_scenario("live_questions", private_display, openclicky_home=Path.home() / ".openclicky")
+    boxes, results = outcome["boxes"], outcome["results"]
+
+    def lands_on(pointer, box, margin=12):
+        x, y, width, height = box
+        return x - margin <= pointer[0] <= x + width + margin and y - margin <= pointer[1] <= y + height + margin
+
+    assert results[0]["mode"] == "pointing" and lands_on(results[0]["pointer"], boxes["Save"]), results[0]
+    assert results[1]["mode"] == "pointing" and lands_on(results[1]["pointer"], boxes["Delete note"]), results[1]
+    assert results[2]["mode"] == "following" and "paris" in results[2]["answer"].lower(), results[2]

@@ -102,7 +102,7 @@ def test_an_account_goes_to_the_backends_chat_never_with_own_keys():
 
 
 def test_nothing_configured_says_what_to_add():
-    with pytest.raises(AskError, match="anthropic or openai key, or an openclicky account"):
+    with pytest.raises(AskError, match="anthropic, openrouter or openai key, or an openclicky account"):
         request_for("hi", SCREENSHOT, Conversation(), LinuxSettings())
 
 

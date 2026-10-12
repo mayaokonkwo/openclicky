@@ -259,5 +259,94 @@ def scenario_settings_window() -> dict:
             "mode": oct(os.stat(shell_json).st_mode & 0o777), "status": settings.status_label.get_text(),
             "pointer_presence_now": app.pointer.presence, "pointer_visible_while_following": app.pointer.triangle.get_visible()}
 
+
+def scenario_shake_to_appear() -> dict:
+    app = wire_up("Control_R", start_recording=StandInRecording, transcribe=lambda _wav: "")
+    app.pointer.set_presence("onShake")
+    app.pointer.tracker.rest_delay_seconds = 1.0
+    seen = {}
+    move_mouse(400, 300)
+    pump(0.4)
+    seen["at_start"] = app.pointer.triangle.get_visible()
+    for x in range(400, 900, 25):  # an ordinary move across the screen
+        move_mouse(x, 300)
+        pump(0.034)
+    seen["after_a_plain_move"] = app.pointer.triangle.get_visible()
+    x = 620
+    for swing in range(6):  # a shake: quick 160 px swings, side to side, four steps each
+        target = 780 if swing % 2 == 0 else 620
+        for step in range(1, 5):
+            move_mouse(round(x + (target - x) * step / 4), 300)
+            pump(0.034)
+        x = target
+    seen["after_a_shake"] = app.pointer.triangle.get_visible()
+    screenshot("shake-to-appear")
+    pump(1.6)
+    seen["after_resting"] = app.pointer.triangle.get_visible()
+    app.pointer.set_presence("whileMoving")
+    seen["while_moving_after_rest"] = app.pointer.triangle.get_visible()
+    move_mouse(500, 400)
+    pump(0.2)
+    seen["while_moving_after_a_nudge"] = app.pointer.triangle.get_visible()
+    return seen
+
+
+# MARK: live: a real model through the person's own key (only with OPENCLICKY_LIVE=1)
+
+def editor_window():
+    """A small editor-like app: a toolbar of labelled buttons and a text area, at known places."""
+    window = Gtk.Window(title="Notes — shopping list")
+    window.set_default_size(980, 600)
+    layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    toolbar = Gtk.Box(spacing=12)
+    buttons = {}
+    for label in ("New", "Open", "Save", "Print", "Settings"):
+        button = Gtk.Button(label=label)
+        toolbar.pack_start(button, False, False, 0)
+        buttons[label] = button
+    layout.pack_start(toolbar, False, False, 0)
+    text = Gtk.TextView()
+    text.get_buffer().set_text("milk\neggs\nbread\n")
+    layout.pack_start(text, True, True, 0)
+    footer = Gtk.Box()
+    delete = Gtk.Button(label="Delete note")
+    footer.pack_end(delete, False, False, 0)
+    buttons["Delete note"] = delete
+    layout.pack_start(footer, False, False, 0)
+    window.add(layout)
+    window.move(120, 90)
+    window.show_all()
+    pump(0.6)
+    origin_x, origin_y = window.get_window().get_origin()[1:3]
+    boxes = {}
+    for label, button in buttons.items():
+        allocation = button.get_allocation()
+        boxes[label] = [origin_x + allocation.x, origin_y + allocation.y, allocation.width, allocation.height]
+    return window, boxes
+
+
+def scenario_live_questions() -> dict:
+    window, boxes = editor_window()
+    app = wire_up("Control_R", start_recording=StandInRecording, transcribe=lambda _wav: "")
+    app.listener.start()
+    move_mouse(300, 400)
+    pump(0.3)
+    results = []
+    for index, question in enumerate(json.loads(os.environ["OPENCLICKY_LIVE_QUESTIONS"])):
+        started = time.monotonic()
+        app.asking.submit(question)
+        pump(60, until=lambda: not app.asking.is_answering and app.pointer.mode != "flying"
+             and app.pointer.caption_label.get_text() not in ("", "thinking…"[:len(app.pointer.caption_label.get_text())]))
+        pump(1.5)  # the caption finishes typing
+        results.append({"question": question, "seconds": round(time.monotonic() - started, 1),
+                        "answer": app.asking.conversation.exchanges[-1][1] if app.asking.conversation.exchanges else None,
+                        "caption": app.pointer.caption_label.get_text(), "mode": app.pointer.mode,
+                        "pointer": [round(value) for value in app.pointer.position]})
+        screenshot(f"live-{index + 1}")
+        app.asking.escape()
+        pump(1.5, until=lambda: app.pointer.mode == "following")
+    app.listener.stop()
+    return {"boxes": boxes, "results": results}
+
 if __name__ == "__main__":
     print(json.dumps(globals()[f"scenario_{sys.argv[1]}"]()))

@@ -21,11 +21,12 @@ gi.require_version("GdkX11", "3.0")
 from gi.repository import Gdk, GdkPixbuf, GdkX11, GLib, Gtk  # noqa: E402
 
 from .config import HOSTED_BACKEND_URL, LinuxSettings, load_settings, save_settings  # noqa: E402
+from .presence import PRESENCE_LABELS  # noqa: E402
 from .pointer_view import POINTER_OUTLINE, POINTER_HEIGHT, POINTER_WIDTH  # noqa: E402
 from .x11 import polygon_rows  # noqa: E402
 
 DICTATION_KEY_CHOICES = (("Control_R", "right ctrl"), ("Alt_R", "right alt"), ("Super_R", "right super"), ("Menu", "menu key"))
-POINTER_CHOICES = (("always", "always, beside the mouse"), ("whenAnswering", "only while answering"))
+POINTER_CHOICES = tuple(PRESENCE_LABELS.items())
 
 
 def present_with_focus(window: Gtk.Window) -> None:
@@ -99,6 +100,7 @@ class SettingsWindow:
         self._heading(layout, "Keys & account")
         self.fields["openai_api_key"] = self._text(layout, "OpenAI key", "sk-… (dictation, and answers without an Anthropic key)", secret=True)
         self.fields["anthropic_api_key"] = self._text(layout, "Anthropic key", "sk-ant-… (answers)", secret=True)
+        self.fields["openrouter_api_key"] = self._text(layout, "OpenRouter key", "sk-or-… (answers, when there is no Anthropic key)", secret=True)
         self.fields["account_token"] = self._text(layout, "OpenClicky token", "an account token, used when a key is missing", secret=True)
         self.fields["backend_url"] = self._text(layout, "Backend", HOSTED_BACKEND_URL)
 
@@ -180,7 +182,8 @@ class SettingsWindow:
         def has(field_name: str) -> bool:
             return bool((values.get(field_name) or "").strip())
         dictation = "your OpenAI key" if has("openai_api_key") else "your OpenClicky account" if has("account_token") else "nothing yet: add an OpenAI key or a token"
-        answers = ("your Anthropic key" if has("anthropic_api_key") else "your OpenAI key" if has("openai_api_key")
+        answers = ("your Anthropic key" if has("anthropic_api_key") else "your OpenRouter key" if has("openrouter_api_key")
+                   else "your OpenAI key" if has("openai_api_key")
                    else "your OpenClicky account" if has("account_token") else "nothing yet: add a key or a token")
         self.routes_label.set_text(f"Dictation goes to {dictation}.\nAnswers come from {answers}.")
 

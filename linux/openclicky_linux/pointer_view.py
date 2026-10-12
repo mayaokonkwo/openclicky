@@ -3,8 +3,10 @@ flies along an arc to what an answer is about, with a caption bubble typed out b
 
 Two popup windows, so neither ever takes the focus: the triangle (an orange window cut to the
 triangle's outline with the SHAPE extension, so it needs no compositor and no cairo bridge, and with
-an empty input shape, so clicks go straight through it) and the caption. Follows the mouse at 30 Hz, a little below and to the right so the real cursor stays clear.
-With "whenAnswering" it stays out of sight until an answer shows.
+an empty input shape, so clicks go straight through it) and the caption. Follows the mouse at 30 Hz,
+a little below and to the right so the real cursor stays clear. Whether it shows while following is
+the presence setting (`presence.py`: always, while the mouse moves, after a shake, only while
+answering); flying, pointing or captioning, it always shows.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ gi.require_version("GdkX11", "3.0")
 from gi.repository import Gdk, GdkX11, GLib, Gtk  # noqa: E402,F401
 
 from .pointing import flight_position, flight_seconds  # noqa: E402
+from .presence import PointerPresenceTracker  # noqa: E402
 from .x11 import polygon_rows, shape_window  # noqa: E402
 
 POINTER_WIDTH = 20
@@ -51,8 +54,9 @@ def _make_click_through(window: Gtk.Window, outline_rows=None) -> None:
 
 
 class PointerView:
-    def __init__(self, presence: str = "always", on_caption_finished: Callable[[], None] = lambda: None) -> None:
-        self.presence = presence
+    def __init__(self, presence: str = "always", on_caption_finished: Callable[[], None] = lambda: None,
+                 rest_delay_seconds: float = 3.0) -> None:
+        self.tracker = PointerPresenceTracker(presence, rest_delay_seconds=rest_delay_seconds)
         self.on_caption_finished = on_caption_finished
         self.mode = "following"  # "following" | "flying" | "pointing"
         self.position = (0.0, 0.0)
@@ -114,23 +118,34 @@ class PointerView:
         if self.caption.get_visible():
             self._place_caption()
 
+    @property
+    def presence(self) -> str:
+        return self.tracker.presence
+
     def _apply_presence(self) -> None:
-        visible = self.presence == "always" or self.mode != "following" or self.caption.get_visible()
+        visible = self.tracker.is_awake or self.mode != "following" or self.caption.get_visible()
         if visible and not self.triangle.get_visible():
+            # Placed where it belongs before it shows, so it never appears where it was last hidden.
+            if self.mode == "following":
+                self.position = self._follow_target()
+            self._move_triangle()
             self.triangle.show_all()
         elif not visible and self.triangle.get_visible():
             self.triangle.hide()
 
     def set_presence(self, presence: str) -> None:
-        self.presence = presence
+        self.tracker.presence = presence
         self._apply_presence()
 
     def _follow_tick(self) -> bool:
+        mouse_x, mouse_y = self.mouse_position()
+        self.tracker.update(mouse_x, mouse_y, time.monotonic())
         if self.mode == "following":
-            target = self._follow_target()
+            target = (float(mouse_x + FOLLOW_OFFSET[0]), float(mouse_y + FOLLOW_OFFSET[1]))
             if target != self.position:
                 self.position = target
                 self._move_triangle()
+        self._apply_presence()
         return True
 
     # MARK: flying
@@ -166,6 +181,9 @@ class PointerView:
             self._move_triangle()
             self._flight = None
             self.mode = then
+            if then == "following":
+                # Back beside the mouse: shown for now, then it rests away as the presence says.
+                self.tracker.wake(time.monotonic())
             self._apply_presence()
             return False
         return True
