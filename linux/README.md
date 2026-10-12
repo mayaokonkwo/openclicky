@@ -12,6 +12,9 @@
 
 Not on Linux yet: spoken answers, asking by voice, the agent lane.
 
+The user guide, with pictures, is [docs/linux.md](../docs/linux.md). This page is for building,
+testing and reviewing it.
+
 ## Needs
 
 - **An X11 session.** Wayland does not let an app watch a key, paste into another app or float a
@@ -98,3 +101,58 @@ the Save and Delete buttons and stays put for "what is the capital of france?".
 Not yet: spoken answers and asking by voice, guided steps, more than one screen (the whole X screen
 is one image), spoken numbers as digits, the model clean-up, history, the "is there a text box?"
 check (AT-SPI), offline engines (Parakeet runs on Linux through sherpa-onnx), Wayland.
+
+## For reviewers
+
+**What changes outside `linux/`:** a new page, [`docs/linux.md`](../docs/linux.md), with its pictures
+in `docs/media/linux/` (about 120 KB); one row in `CONTRIBUTING.md`'s table; a few lines in
+`.gitignore` (the virtualenv and Python caches). Nothing in `macos/`, `backend/`, `agent/` or the
+main README changes, and no backend route is added: the client uses `/agent/transcribe` and `/chat`
+exactly as the Mac app sends them.
+
+**Checking it in about a minute**, on any Linux with Python 3.10+, GTK 3 and Xvfb (no key, no
+microphone, nothing on your screen):
+
+```bash
+cd linux
+python3 -m venv --system-site-packages .venv && .venv/bin/pip install -e '.[test]'
+.venv/bin/python -m pytest             # 84 tests; the X11 ones start their own Xvfb
+OPENCLICKY_SCREENSHOT_DIR=/tmp/shots .venv/bin/python -m pytest tests/test_x11.py   # and look at /tmp/shots
+scripts/make-doc-screenshots.sh        # remakes docs/media/linux/ (a scripted answer; --live uses your key)
+```
+
+`OPENCLICKY_LIVE=1` adds the one test that spends a real key (three requests about a test window).
+
+**Where each piece comes from.** Most of the logic is a port of a Mac file, kept close to it on
+purpose (the same names, numbers and sentences) so the two can be compared side by side and fixed
+together:
+
+| Linux | Mac counterpart | Kept the same |
+|---|---|---|
+| `controller.py` | `Dictation/DictationTakeController.swift` | take ids, hold/tap/double tap/esc, "a shortcut, not a take", paste only into the window from the press, the orb's sentences (ctrl where the Mac says ⌘) |
+| `gestures.py` | `CompanionShortcutRecognizer.swift` | the 350 ms tap and 450 ms double-tap windows; left ctrl twice is the Mac's ⌃ ×2 |
+| `formatter.py` | `Dictation/TakeFormatter.swift` (`formatLocally`) | fillers, dictionary (longest alias first), whole-take shortcuts, sentence case |
+| `transcriber.py`, `ask.py` | `ProviderRoute.swift`, `ClaudeAPI.swift`, `AnswerProvider.swift` | own key straight to its vendor, never to the backend; the answer order Anthropic → OpenRouter → OpenAI → account; the models |
+| `ask.py` (prompt) | `CompanionManager.companionVoiceResponseSystemPrompt` | its rules and the pointing section, reworded for an answer that is read rather than heard |
+| `pointing.py` | `CompanionManager.parsePointingCoordinates` | the tag grammar, leading/trailing tags, no recursion on two tags |
+| `presence.py` | `PointerPresence.swift` (+ its tests, ported case for case) | the shake detector's numbers, the 3 s rest |
+| `config.py`, `space.py` | `OpenClickyConfiguration.swift`, `Dictation/DictationSpace.swift` | the same `shell.json` keys (`openaiApiKey`, `anthropicApiKey`, `openRouterApiKey`, `token`, `backendUrl`, `language`, `answerModels`) and dictionary files; Linux adds only `linuxDictationKey` and `linuxPointer` |
+
+New for Linux, with no Mac counterpart: `x11.py` (RECORD key watcher, XTEST paste keystroke, SHAPE
+for the pointer), `desktop.py`, `pointer_view.py`, `windows.py`, `screen.py`, `recorder.py`.
+
+**Decisions worth a look:**
+
+- *X11 only.* Wayland deliberately blocks watching global keys, typing into other apps and floating
+  click-through windows; supporting it means desktop portals or compositor-specific protocols per
+  desktop. On Wayland the app says so and exits instead of half-working.
+- *Python + GTK 3, nothing compiled.* PyGObject comes from the distribution; the only pip
+  dependency is `python-xlib`. No `python3-gi-cairo` either: the pointer is shaped with X's SHAPE
+  extension, because without that bridge GTK drew it as a black square.
+- *`shell.json` is shared with the Mac app.* Settings writes only its own fields and keeps every
+  other key, writes atomically with mode 600, and refuses to overwrite a file it cannot parse.
+- *The key watcher listens, it never grabs* (RECORD, like the Mac's listen-only event tap): right
+  ctrl keeps working in every other app.
+
+**Not yet verified:** dictation with a real microphone (the machine it was built on had none passing
+audio), and other desktops than Xfce (KDE, GNOME on Xorg, MATE).

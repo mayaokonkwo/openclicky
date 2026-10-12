@@ -76,10 +76,10 @@ def wire_up(dictation_key: str, start_recording: Callable[[], Any], transcribe: 
     from .desktop import ClipboardPaster, OrbWindow
     from .pointer_view import PointerView
     from .screen import capture_screen, screen_size
-    from .windows import ComposerWindow, SettingsWindow, TrayIcon
+    from .windows import ComposerWindow, SettingsWindow, TrayIcon, pointer_icon
     from .x11 import DictationKeyListener, focused_window
 
-    from gi.repository import GLib
+    from gi.repository import GLib, Gtk
     from Xlib import display as xdisplay
 
     settings = load_settings()
@@ -132,6 +132,8 @@ def wire_up(dictation_key: str, start_recording: Callable[[], Any], transcribe: 
     def settings_saved(new_settings: LinuxSettings) -> None:
         pointer.set_presence(new_settings.pointer_presence)
 
+    # Every OpenClicky window (Settings, the ask box) carries the pointer as its icon.
+    Gtk.Window.set_default_icon(pointer_icon(64))
     settings_window = SettingsWindow(on_saved=settings_saved)
     tray = TrayIcon(on_ask=asking.open_composer, on_settings=settings_window.show, on_quit=on_quit) if with_tray else None
 
@@ -171,10 +173,11 @@ def _refuse_wayland() -> bool:
 
 def _open_settings_only() -> int:
     # `windows` first: it pins GTK 3.
-    from .windows import SettingsWindow
+    from .windows import SettingsWindow, pointer_icon
 
     from gi.repository import GLib, Gtk
 
+    Gtk.Window.set_default_icon(pointer_icon(64))
     settings_window = SettingsWindow()
     settings_window.window.connect("hide", lambda _window: Gtk.main_quit())
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, lambda: (Gtk.main_quit(), False)[1])
