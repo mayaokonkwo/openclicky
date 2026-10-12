@@ -11,6 +11,7 @@ own model keys.
 | `backend/` | TypeScript (Hono) | The only thing that holds model keys. Proxies OpenAI / Anthropic / Realtime / speech, serves the skill library, meters credits (optional). Runs on Node or Cloudflare Workers. |
 | `agent/` | TypeScript | The `openclicky` CLI: the Codex agent lane, the gate, ask, voice, skills. |
 | `macos/OpenClicky/` | Swift | The Mac app: notch HUD, cursor buddy, push-to-talk, pointing, dictation. |
+| `linux/` | Python (GTK 3, X11) | Early Linux client: dictation only (hold right ctrl, speak, let go). See `linux/README.md`. |
 | `skills/`, `app-skills/` | Markdown | Skills the agent and the voice model read. |
 | `docs/superpowers/plans/` | Markdown | The implementation plans behind each cut, if you want the reasoning. |
 
