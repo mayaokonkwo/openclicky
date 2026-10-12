@@ -1,7 +1,7 @@
 [project]
 name = "openclicky-linux"
 version = "0.1.0"
-description = "OpenClicky dictation for Linux (X11): hold a key, speak, let go."
+description = "OpenClicky for Linux (X11): dictation, the pointer, and asking about your screen."
 requires-python = ">=3.10"
 license = "MIT"
 # PyGObject (GTK 3) comes from the distribution: python3-gi and gir1.2-gtk-3.0.

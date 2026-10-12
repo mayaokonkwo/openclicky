@@ -1,20 +1,27 @@
 """Settings, read from the same `~/.openclicky/shell.json` the Mac app and the CLI use.
 
-Keys read here: `openaiApiKey` (own key, sent straight to OpenAI), `token` and `backendUrl` (an
-OpenClicky account, the fallback), `language` (the dictation language; English when unset), and the
-Linux-only `linuxDictationKey` (an X keysym name, `Control_R` by default: Linux never sees fn).
-`BACKEND_URL` and `OPENCLICKY_OPENAI_KEY` in the environment win over the file, as on the Mac.
+Keys read here: `openaiApiKey` and `anthropicApiKey` (own keys, sent straight to their vendor),
+`token` and `backendUrl` (an OpenClicky account, the fallback), `language` (dictation and answers;
+English when unset), and the Linux-only `linuxDictationKey` (an X keysym name, `Control_R` by
+default: Linux never sees fn) and `linuxPointer` ("always", or "whenAnswering": out of sight until
+an answer). `BACKEND_URL`, `OPENCLICKY_OPENAI_KEY` and `OPENCLICKY_ANTHROPIC_KEY` in the
+environment win over the file, as on the Mac.
+
+`save_settings` writes the Settings window's fields back and leaves every other key as it was: the
+Mac app keeps its own (the refresh token, the voice, the answer source) in the same file.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 HOSTED_BACKEND_URL = "https://api.openclicky.flowsxr.com"
 DEFAULT_DICTATION_KEY = "Control_R"
+POINTER_PRESENCES = ("always", "whenAnswering")
 
 
 def openclicky_directory() -> Path:
@@ -24,10 +31,12 @@ def openclicky_directory() -> Path:
 @dataclass(frozen=True)
 class LinuxSettings:
     openai_api_key: str | None = None
+    anthropic_api_key: str | None = None
     account_token: str | None = None
     backend_url: str = HOSTED_BACKEND_URL
     language_code: str | None = None
     dictation_key: str = DEFAULT_DICTATION_KEY
+    pointer_presence: str = "always"
 
     @property
     def bare_language_code(self) -> str | None:
@@ -56,8 +65,56 @@ def load_settings(shell_json_path: Path | None = None, environment: dict[str, st
     backend_url = _cleaned(environment.get("BACKEND_URL")) or _cleaned(raw.get("backendUrl")) or HOSTED_BACKEND_URL
     return LinuxSettings(
         openai_api_key=_cleaned(environment.get("OPENCLICKY_OPENAI_KEY")) or _cleaned(raw.get("openaiApiKey")),
+        anthropic_api_key=_cleaned(environment.get("OPENCLICKY_ANTHROPIC_KEY")) or _cleaned(raw.get("anthropicApiKey")),
         account_token=_cleaned(raw.get("token")),
         backend_url=backend_url.rstrip("/"),
         language_code=_cleaned(raw.get("language")),
         dictation_key=_cleaned(raw.get("linuxDictationKey")) or DEFAULT_DICTATION_KEY,
+        pointer_presence=raw.get("linuxPointer") if raw.get("linuxPointer") in POINTER_PRESENCES else "always",
     )
+
+
+# The Settings window's fields → shell.json keys. An empty field removes its key.
+SETTINGS_FIELDS = {
+    "openai_api_key": "openaiApiKey",
+    "anthropic_api_key": "anthropicApiKey",
+    "account_token": "token",
+    "backend_url": "backendUrl",
+    "language_code": "language",
+    "dictation_key": "linuxDictationKey",
+    "pointer_presence": "linuxPointer",
+}
+
+
+def save_settings(changes: dict[str, str | None], shell_json_path: Path | None = None) -> None:
+    """Writes the given fields (keys of `SETTINGS_FIELDS`) into shell.json, keeping every other key.
+    Written whole to a temporary file and moved into place, readable by this user only: it holds keys."""
+    path = shell_json_path or openclicky_directory() / "shell.json"
+    try:
+        current = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(current, dict):
+            current = {}
+    except FileNotFoundError:
+        current = {}
+    except ValueError as broken:
+        # Never overwrite a file that could not be read: the person's other settings are in it.
+        raise ValueError(f"{path} is not valid json; fix or remove it first") from broken
+    for field_name, value in changes.items():
+        json_key = SETTINGS_FIELDS[field_name]
+        cleaned = _cleaned(value)
+        if cleaned is None or (field_name == "backend_url" and cleaned.rstrip("/") == HOSTED_BACKEND_URL):
+            current.pop(json_key, None)
+        else:
+            current[json_key] = cleaned
+    path.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temporary_path = tempfile.mkstemp(dir=path.parent, prefix=".shell-", suffix=".json")
+    try:
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as temporary_file:
+            json.dump(current, temporary_file, indent=2)
+            temporary_file.write("\n")
+        os.chmod(temporary_path, 0o600)
+        os.replace(temporary_path, path)
+    except BaseException:
+        if os.path.exists(temporary_path):
+            os.unlink(temporary_path)
+        raise

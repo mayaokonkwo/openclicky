@@ -1,0 +1,228 @@
+"""The pointer: a small orange-red triangle beside the mouse (the Mac's overlay cursor colour), that
+flies along an arc to what an answer is about, with a caption bubble typed out beside it.
+
+Two popup windows, so neither ever takes the focus: the triangle (an orange window cut to the
+triangle's outline with the SHAPE extension, so it needs no compositor and no cairo bridge, and with
+an empty input shape, so clicks go straight through it) and the caption. Follows the mouse at 30 Hz, a little below and to the right so the real cursor stays clear.
+With "whenAnswering" it stays out of sight until an answer shows.
+"""
+
+from __future__ import annotations
+
+import time
+from typing import Callable
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+gi.require_version("GdkX11", "3.0")
+from gi.repository import Gdk, GdkX11, GLib, Gtk  # noqa: E402,F401
+
+from .pointing import flight_position, flight_seconds  # noqa: E402
+from .x11 import polygon_rows, shape_window  # noqa: E402
+
+POINTER_WIDTH = 20
+POINTER_HEIGHT = 24
+# Where the pointer sits relative to the mouse while following it.
+FOLLOW_OFFSET = (14, 16)
+CAPTION_MAX_WIDTH = 300
+CAPTION_TYPING_MILLISECONDS = 30
+FOLLOW_INTERVAL_MILLISECONDS = 33
+FLIGHT_FRAME_MILLISECONDS = 16
+
+_CAPTION_CSS = b"""
+.openclicky-pointer { background-color: #f0452b; }
+.openclicky-caption { background-color: #f0452b; border-radius: 6px; padding: 5px 8px; }
+.openclicky-caption label { color: #ffffff; font-size: 11pt; font-weight: 500; }
+"""
+
+
+# Tip at the top-left (0, 0), like an arrow cursor: the tip is the point it points at.
+POINTER_OUTLINE = [(0.0, 0.0), (POINTER_WIDTH, POINTER_HEIGHT * 0.64), (POINTER_WIDTH * 0.44, POINTER_HEIGHT * 0.6),
+                   (POINTER_WIDTH * 0.12, POINTER_HEIGHT)]
+
+
+def _make_click_through(window: Gtk.Window, outline_rows=None) -> None:
+    # GTK creates the window on its own connection to the X server: it must have reached the server
+    # before another connection can shape it (otherwise BadWindow, and the pointer stays a square).
+    Gdk.Display.get_default().sync()
+    shape_window(window.get_window().get_xid(), outline_rows=outline_rows, click_through=True)
+
+
+class PointerView:
+    def __init__(self, presence: str = "always", on_caption_finished: Callable[[], None] = lambda: None) -> None:
+        self.presence = presence
+        self.on_caption_finished = on_caption_finished
+        self.mode = "following"  # "following" | "flying" | "pointing"
+        self.position = (0.0, 0.0)
+        self._flight: tuple[tuple[float, float], tuple[float, float], float, float, str] | None = None
+        self._caption_text = ""
+        self._caption_typed = 0
+        self._caption_timer: int | None = None
+        self._caption_dismiss_timer: int | None = None
+
+        self.triangle = Gtk.Window(type=Gtk.WindowType.POPUP)
+        self.triangle.set_default_size(POINTER_WIDTH, POINTER_HEIGHT)
+        self.triangle.set_size_request(POINTER_WIDTH, POINTER_HEIGHT)
+        self.triangle.set_accept_focus(False)
+        self.triangle.set_keep_above(True)
+        self.triangle.get_style_context().add_class("openclicky-pointer")
+        # Shaped again every time it is shown: some window managers reset a shape on map.
+        self.triangle.connect("map-event", lambda window, _event: _make_click_through(
+            window, outline_rows=polygon_rows(POINTER_OUTLINE, POINTER_WIDTH, POINTER_HEIGHT)))
+
+        provider = Gtk.CssProvider()
+        provider.load_from_data(_CAPTION_CSS)
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        if not Gdk.Screen.get_default().is_composited():
+            # Round corners need a compositor; without one they show the window's square corners.
+            square = Gtk.CssProvider()
+            square.load_from_data(b".openclicky-caption { border-radius: 0; }")
+            Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), square, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+        self.caption = Gtk.Window(type=Gtk.WindowType.POPUP)
+        self.caption.set_accept_focus(False)
+        self.caption.set_keep_above(True)
+        box = Gtk.Box()
+        box.get_style_context().add_class("openclicky-caption")
+        self.caption_label = Gtk.Label()
+        self.caption_label.set_line_wrap(True)
+        self.caption_label.set_max_width_chars(42)
+        self.caption_label.set_xalign(0)
+        box.add(self.caption_label)
+        self.caption.add(box)
+        self.caption.connect("map-event", lambda window, _event: _make_click_through(window))
+
+        self.position = self._follow_target()
+        self._move_triangle()
+        self._apply_presence()
+        GLib.timeout_add(FOLLOW_INTERVAL_MILLISECONDS, self._follow_tick)
+
+    # MARK: where it is
+
+    @staticmethod
+    def mouse_position() -> tuple[int, int]:
+        _screen, mouse_x, mouse_y = Gdk.Display.get_default().get_default_seat().get_pointer().get_position()[0:3]
+        return mouse_x, mouse_y
+
+    def _follow_target(self) -> tuple[float, float]:
+        mouse_x, mouse_y = self.mouse_position()
+        return float(mouse_x + FOLLOW_OFFSET[0]), float(mouse_y + FOLLOW_OFFSET[1])
+
+    def _move_triangle(self) -> None:
+        self.triangle.move(round(self.position[0]), round(self.position[1]))
+        if self.caption.get_visible():
+            self._place_caption()
+
+    def _apply_presence(self) -> None:
+        visible = self.presence == "always" or self.mode != "following" or self.caption.get_visible()
+        if visible and not self.triangle.get_visible():
+            self.triangle.show_all()
+        elif not visible and self.triangle.get_visible():
+            self.triangle.hide()
+
+    def set_presence(self, presence: str) -> None:
+        self.presence = presence
+        self._apply_presence()
+
+    def _follow_tick(self) -> bool:
+        if self.mode == "following":
+            target = self._follow_target()
+            if target != self.position:
+                self.position = target
+                self._move_triangle()
+        return True
+
+    # MARK: flying
+
+    def fly_to(self, screen_x: int, screen_y: int) -> None:
+        self._start_flight((float(screen_x), float(screen_y)), then="pointing")
+
+    def return_to_mouse(self) -> None:
+        if self.mode == "following":
+            return
+        self._start_flight(self._follow_target(), then="following")
+
+    def _start_flight(self, destination: tuple[float, float], then: str) -> None:
+        start = self.position
+        self.mode = "flying"
+        self._apply_presence()
+        self._flight = (start, destination, time.monotonic(), flight_seconds(start, destination), then)
+        GLib.timeout_add(FLIGHT_FRAME_MILLISECONDS, self._flight_tick)
+
+    def _flight_tick(self) -> bool:
+        if self._flight is None:
+            return False
+        start, destination, started_at, duration, then = self._flight
+        if then == "following":
+            # The mouse may move during the flight home: aim at where it is now.
+            destination = self._follow_target()
+            self._flight = (start, destination, started_at, duration, then)
+        progress = (time.monotonic() - started_at) / duration
+        self.position = flight_position(start, destination, progress)
+        self._move_triangle()
+        if progress >= 1:
+            self.position = destination
+            self._move_triangle()
+            self._flight = None
+            self.mode = then
+            self._apply_presence()
+            return False
+        return True
+
+    # MARK: the caption
+
+    def show_caption(self, text: str, hold_seconds: float | None) -> None:
+        """Types `text` out beside the pointer; holds it `hold_seconds` once typed (None: until replaced)."""
+        self._cancel_caption_timers()
+        self._caption_text = text
+        self._caption_typed = 0
+        # The bubble is as wide as the whole caption will need (up to 42 characters) from the
+        # first letter, so it neither grows while typing nor wraps after every word.
+        self.caption_label.set_width_chars(min(len(text), 42))
+        self.caption_label.set_text("")
+        self._caption_hold_seconds = hold_seconds
+        self.caption.show_all()
+        self._apply_presence()
+        self._caption_timer = GLib.timeout_add(CAPTION_TYPING_MILLISECONDS, self._type_next_character)
+
+    def _type_next_character(self) -> bool:
+        self._caption_typed += 1
+        self.caption_label.set_text(self._caption_text[: self._caption_typed])
+        self.caption.resize(1, 1)
+        self._place_caption()
+        if self._caption_typed < len(self._caption_text):
+            return True
+        self._caption_timer = None
+        if self._caption_hold_seconds is not None:
+            self._caption_dismiss_timer = GLib.timeout_add(int(self._caption_hold_seconds * 1000), self._caption_ran_out)
+        return False
+
+    def _caption_ran_out(self) -> bool:
+        self._caption_dismiss_timer = None
+        self.dismiss_caption()
+        self.on_caption_finished()
+        return False
+
+    def dismiss_caption(self) -> None:
+        self._cancel_caption_timers()
+        self.caption.hide()
+        self._apply_presence()
+
+    def _cancel_caption_timers(self) -> None:
+        for timer in (self._caption_timer, self._caption_dismiss_timer):
+            if timer is not None:
+                GLib.source_remove(timer)
+        self._caption_timer = None
+        self._caption_dismiss_timer = None
+
+    def _place_caption(self) -> None:
+        caption_width, _caption_height = self.caption.get_size()
+        screen_width = Gdk.get_default_root_window().get_width()
+        pointer_x, pointer_y = self.position
+        # To the right of the pointer, or to its left when it would run off the screen.
+        if pointer_x + POINTER_WIDTH + 6 + caption_width <= screen_width - 12:
+            caption_x = pointer_x + POINTER_WIDTH + 6
+        else:
+            caption_x = pointer_x - 6 - caption_width
+        self.caption.move(round(caption_x), round(pointer_y + POINTER_HEIGHT * 0.5))

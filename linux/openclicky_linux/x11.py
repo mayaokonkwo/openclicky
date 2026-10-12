@@ -4,6 +4,9 @@
   input focus when no window manager sets it, then the window's `WM_CLASS`, so terminals get
   ctrl+shift+v instead of ctrl+v.
 - `send_paste_keystroke` posts the keystroke with XTEST to whatever has the focus.
+- `shape_window` cuts a window to a shape and/or makes clicks pass through it, with the SHAPE
+  extension itself: GTK's own route needs the GTK–cairo bridge (python3-gi-cairo), which many
+  systems do not have, and without it the pointer drew as a black square.
 - `DictationKeyListener` watches every key press and release through the RECORD extension:
   listen-only, like the Mac app's `CGEvent` tap, so the key keeps working in other apps and
   nothing is grabbed. It runs on its own thread with its own connections.
@@ -20,7 +23,7 @@ from typing import Callable
 
 from Xlib import X, XK, display as xdisplay
 from Xlib.error import XError
-from Xlib.ext import record, xtest
+from Xlib.ext import record, shape, xtest
 from Xlib.protocol import rq
 
 from .controller import FocusedWindow
@@ -94,12 +97,53 @@ def send_paste_keystroke(display: xdisplay.Display, with_shift: bool) -> bool:
     return True
 
 
+def polygon_rows(points: list[tuple[float, float]], width: int, height: int) -> list[tuple[int, int, int, int]]:
+    """The polygon as one rectangle (x, y, width, 1) per pixel row it covers: the shape the X
+    server is given, and the pixels the tray icon is drawn with. Sampled at each row's centre."""
+    rows = []
+    edges = list(zip(points, points[1:] + points[:1]))
+    for row in range(height):
+        sample_y = row + 0.5
+        crossings = sorted(
+            start_x + (sample_y - start_y) * (end_x - start_x) / (end_y - start_y)
+            for (start_x, start_y), (end_x, end_y) in edges
+            if (start_y <= sample_y < end_y) or (end_y <= sample_y < start_y))
+        for left, right in zip(crossings[0::2], crossings[1::2]):
+            first_pixel = max(0, round(left))
+            last_pixel = min(width, round(right))
+            if last_pixel > first_pixel:
+                rows.append((first_pixel, row, last_pixel - first_pixel, 1))
+    return rows
+
+
+_shaping_display: xdisplay.Display | None = None
+
+
+def shape_window(window_id: int, outline_rows: list[tuple[int, int, int, int]] | None = None, click_through: bool = True) -> bool:
+    """Cuts the window to `outline_rows` (when given) and gives it an empty input shape (clicks go
+    to whatever is under it). False when the X server has no SHAPE extension."""
+    global _shaping_display
+    if _shaping_display is None:
+        _shaping_display = xdisplay.Display()
+    if not _shaping_display.has_extension("SHAPE"):
+        return False
+    window = _shaping_display.create_resource_object("window", window_id)
+    if outline_rows is not None:
+        window.shape_rectangles(shape.SO.Set, shape.SK.Bounding, X.Unsorted, 0, 0, outline_rows)
+    if click_through:
+        window.shape_rectangles(shape.SO.Set, shape.SK.Input, X.Unsorted, 0, 0, [])
+    _shaping_display.sync()
+    return True
+
+
 class DictationKeyListener:
-    """Calls `on_dictation_key(is_down, at_seconds)` and `on_other_key_down(is_escape)` from its own
-    thread for every key press and release on the X server."""
+    """Calls `on_dictation_key(is_down, at_seconds)`, `on_composer_key(is_down, at_seconds)` and
+    `on_other_key_down(is_escape)` from its own thread for every key press and release on the X server."""
 
     def __init__(self, dictation_key_name: str, on_dictation_key: Callable[[bool, float], None],
-                 on_other_key_down: Callable[[bool], None], display_name: str | None = None) -> None:
+                 on_other_key_down: Callable[[bool], None], display_name: str | None = None,
+                 composer_key_name: str | None = "Control_L",
+                 on_composer_key: Callable[[bool, float], None] = lambda _is_down, _at_seconds: None) -> None:
         self._control_display = xdisplay.Display(display_name)
         self._record_display = xdisplay.Display(display_name)
         if not self._record_display.has_extension("RECORD"):
@@ -111,6 +155,10 @@ class DictationKeyListener:
         if not self.dictation_keycodes:
             raise ValueError(f"no key on this keyboard produces {dictation_key_name}")
         self.escape_keycodes = self._keycodes_for(XK.XK_Escape)
+        # The key tapped twice for the ask box; never the dictation key itself.
+        composer_keysym = XK.string_to_keysym(composer_key_name) if composer_key_name else X.NoSymbol
+        self.composer_keycodes = (self._keycodes_for(composer_keysym) - self.dictation_keycodes) if composer_keysym != X.NoSymbol else set()
+        self._on_composer_key = on_composer_key
         self._on_dictation_key = on_dictation_key
         self._on_other_key_down = on_other_key_down
         # Our own XTEST keystrokes (the paste) are seen too; they are ignored until this time.
@@ -156,5 +204,7 @@ class DictationKeyListener:
             is_down = event.type == X.KeyPress
             if event.detail in self.dictation_keycodes:
                 self._on_dictation_key(is_down, event.time / 1000.0)
+            elif event.detail in self.composer_keycodes:
+                self._on_composer_key(is_down, event.time / 1000.0)
             elif is_down:
                 self._on_other_key_down(event.detail in self.escape_keycodes)

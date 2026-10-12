@@ -38,10 +38,10 @@ def private_display():
     server.wait(timeout=5)
 
 
-def run_scenario(name: str, display: str) -> dict:
+def run_scenario(name: str, display: str, openclicky_home: Path | None = None) -> dict:
     environment = {key: value for key, value in os.environ.items() if key not in ("WAYLAND_DISPLAY", "XAUTHORITY")}
     environment.update(DISPLAY=display, PYTHONPATH=str(LINUX_DIRECTORY), GDK_BACKEND="x11", NO_AT_BRIDGE="1",
-                       OPENCLICKY_HOME=str(LINUX_DIRECTORY / "tests" / "no-such-openclicky-home"))
+                       OPENCLICKY_HOME=str(openclicky_home or LINUX_DIRECTORY / "tests" / "no-such-openclicky-home"))
     finished = subprocess.run([sys.executable, str(LINUX_DIRECTORY / "tests" / "x11_scenarios.py"), name],
                               env=environment, capture_output=True, text=True, timeout=60)
     assert finished.returncode == 0, finished.stderr
@@ -70,3 +70,39 @@ def test_a_key_typed_while_holding_cancels_the_take(private_display):
     assert outcome["text_box"] == ""
     assert ["failed", "cancelled, that was a shortcut"] in outcome["orb_history"]
     assert not any(phase == "done" for phase, _ in outcome["orb_history"])
+
+
+def test_the_pointer_follows_the_mouse_a_little_below_and_to_the_right(private_display):
+    outcome = run_scenario("pointer_follows_the_mouse", private_display)
+    assert outcome["visible"]
+    assert [position[:2] for position in outcome["positions"]] == [[314, 316], [714, 436]]
+    assert [position[2] for position in outcome["positions"]] == [[314, 316], [714, 436]]
+    # Cut to the triangle (one rectangle per pixel row, not the window's square) and click-through.
+    assert outcome["outline_rows"] > 10
+    assert outcome["clickable_rectangles"] == 0
+
+
+def test_left_ctrl_twice_asks_and_the_pointer_flies_to_the_answer(private_display):
+    outcome = run_scenario("ask_and_point", private_display)
+    assert outcome["composer_opened"] and outcome["composer_has_keyboard"]
+    assert outcome["typed"] == "where do i save this?"
+    assert outcome["composer_closed"]
+    assert outcome["thinking"].startswith("t")  # typing out "thinking…"
+    # The question went with a real screenshot of the whole screen (the private display is 1280x800).
+    assert outcome["asked"] == [["where do i save this?", 1280, 800, True]]
+    assert outcome["pointed_at"] == outcome["save_center"]
+    assert outcome["caption"] == "that save button down on the right keeps your note."
+    assert outcome["after_escape"] == ["following", False]
+
+
+def test_settings_show_the_routes_and_save_into_shell_json(private_display, tmp_path):
+    (tmp_path / "shell.json").write_text(json.dumps({"refreshToken": "keep-me"}))
+    outcome = run_scenario("settings_window", private_display, openclicky_home=tmp_path)
+    assert "Answers come from nothing yet" in outcome["routes_before"]
+    assert "Answers come from your Anthropic key" in outcome["routes_after"]
+    assert outcome["saved"] == {"refreshToken": "keep-me", "anthropicApiKey": "sk-ant-test", "language": "en-IN",
+                                "linuxDictationKey": "Alt_R", "linuxPointer": "whenAnswering"}
+    assert outcome["mode"] == "0o600"
+    assert outcome["status"].startswith("Saved.")
+    assert outcome["pointer_presence_now"] == "whenAnswering"
+    assert not outcome["pointer_visible_while_following"]
