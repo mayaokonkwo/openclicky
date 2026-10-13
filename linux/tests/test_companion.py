@@ -353,3 +353,37 @@ def test_an_answer_that_is_only_a_tag_never_leaves_an_empty_turn_in_the_conversa
     question, remembered = asking.conversation.exchanges[0]
     assert remembered.strip(), "an empty assistant turn makes Anthropic refuse every later question"
     assert remembered == "(pointed at save)"
+
+
+# MARK: spoken answers
+
+def test_an_answer_is_spoken_and_esc_or_a_new_question_stops_it():
+    desktop, pointer, asking = make()
+    spoken, stops, prepared = [], [], []
+    asking.host.speak = spoken.append
+    asking.host.stop_speaking = lambda: stops.append(True)
+    asking.host.prepare_voice = lambda: prepared.append(True)
+    desktop.answer = "[POINT:392,245:save] click save, top left."
+    asking.submit("where do i save?")
+    assert prepared == [True]  # the voice loads while the answer is thought about
+    desktop.run_everything()
+    assert spoken == ["click save, top left."]  # without the tag
+    stops_before = len(stops)
+    asking.escape()
+    assert len(stops) == stops_before + 1
+    asking.submit("and then?")
+    assert len(stops) == stops_before + 2
+
+
+def test_a_failure_or_an_empty_answer_is_not_spoken():
+    desktop, pointer, asking = make()
+    spoken = []
+    asking.host.speak = spoken.append
+    desktop.answer = "[POINT:10,20:save]"
+    asking.submit("where?")
+    desktop.run_everything()
+    from openclicky_linux.ask import AskError
+    desktop.answer = AskError("couldn't reach openrouter.")
+    asking.submit("again?")
+    desktop.run_everything()
+    assert spoken == []

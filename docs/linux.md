@@ -6,7 +6,7 @@ An early Linux client for OpenClicky. It runs against the same backend contract 
 
 What it does today: **ask about your screen** by typing or out loud (the pointer answers and
 points), **step by step guidance**, **the pointer** itself (including shake to appear), **dictation** (untested with a
-real microphone so far), **Settings** and a **tray icon**. Not yet: spoken answers, Wayland.
+real microphone so far), **spoken answers**, **Settings** and a **tray icon**. Not yet: Wayland.
 
 ## Ask about your screen
 
@@ -32,8 +32,12 @@ pointer comes back to the mouse. Follow-ups remember the last ten exchanges.
 Hold **left ctrl + left alt** (the Mac's control + option), ask your question, let go. It is
 transcribed (offline, when the offline engine is downloaded) and answered exactly like a typed
 question: the pointer flies to what it is about, types the answer beside itself, and guides you step
-by step. Adding left alt while you are already dictating turns that take into a question. Answers are
-shown, not spoken, for now.
+by step. Adding left alt while you are already dictating turns that take into a question.
+
+**Answers are spoken**, on this computer, in Kokoro's voice: the Mac app's offline voice, with its
+speakers (Heart by default). Settings → Voice → Offline voice → **Download** (about 350 MB, once);
+**Speak answers** switches it off, **Voice** picks the speaker. The first sentence starts as soon as it
+is ready; **Esc** or a new question stops it.
 
 ## Step by step
 
@@ -156,6 +160,7 @@ have one; GNOME needs an extension); without one, the shortcuts still work and S
 
 - A question sends a screenshot of **every monitor** to whoever answers it (on an OpenClicky
   account, the two nearest your mouse): keep anything private out of sight before you ask.
+- Spoken answers are made on this computer: nothing is sent to be spoken.
 - Dictation with the offline engine sends nothing anywhere. With a key or an account, it sends only
   the audio recorded while you hold the key.
 - Nothing is recorded or sent otherwise: the watcher only notices key presses and clicks (it acts on

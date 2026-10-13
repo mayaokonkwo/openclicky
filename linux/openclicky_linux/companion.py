@@ -48,6 +48,10 @@ class AskHost:
     ask: Callable[[str, "Screenshot | list[Screenshot]", Conversation], str]
     run_in_background: Callable[[Callable[[], Any], Callable[[Any], None]], None]
     schedule: Callable[[float, Callable[[], None]], None]
+    # Spoken answers (voice.py): get ready as a question starts, speak an answer, stop on esc.
+    prepare_voice: Callable[[], None] = lambda: None
+    speak: Callable[[str], None] = lambda _text: None
+    stop_speaking: Callable[[], None] = lambda: None
 
 
 def caption_hold_seconds(text: str) -> float:
@@ -91,6 +95,10 @@ class AskController:
 
     def _ask(self, question: str) -> None:
         self.questions_asked.append(question)
+        # A new question ends whatever is still being said, and the voice gets ready (it loads in a
+        # few seconds, while the answer is being thought about).
+        self.host.stop_speaking()
+        self.host.prepare_voice()
         this_question_id = next(self._question_ids)
         self.question_id = this_question_id
         self.is_answering = True
@@ -136,6 +144,8 @@ class AskController:
         text = result.text or "…"
         self.is_showing_answer = True
         self.pointer.show_caption(text, hold_seconds=caption_hold_seconds(text))
+        if result.text:
+            self.host.speak(result.text)
         if is_a_guided_step:
             self._wait_for_step()
 
@@ -152,6 +162,7 @@ class AskController:
         if not self.is_answering and not self.is_showing_answer and not self.is_waiting_for_step:
             return False
         self.pointer.show_after_screenshot()
+        self.host.stop_speaking()
         self._stop_waiting_for_step()
         self.guide_steps_given = 0
         self.question_id = next(self._question_ids)

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from . import applog, offline
+from . import voice as voice_module
 from .ask import AskError, Conversation, Screenshot, ask as ask_model, request_for
 from .config import LinuxSettings, load_settings
 from .controller import DictationHost, DictationTakeController, OrbModel
@@ -54,6 +55,9 @@ def _describe_setup(dictation_key: str) -> int:
     except AskError as missing:
         print(f"answers: missing ({missing})")
         problems += 1
+    print(f"spoken answers: {'on' if settings.speak_answers else 'off'}, voice "
+          f"{'downloaded' if offline.is_installed(voice_module.KOKORO) else 'not downloaded'}"
+          f"{'' if voice_module.find_player() else ' (no audio player: install pipewire or pulseaudio-utils)'}")
     print(f"language: {settings.language_code or 'not set (the engine detects it)'}")
     print(f"pointer: {settings.pointer_presence}")
     space = load_space()
@@ -74,6 +78,7 @@ class OpenClickyApp:
 
 def wire_up(dictation_key: str, start_recording: Callable[[], Any], transcribe: Callable[[bytes], str],
             prepare_transcription: Callable[[], None] = lambda: None,
+            voice: Any = None,
             ask: Callable[[str, Screenshot, Conversation], str] | None = None,
             display_name: str | None = None, with_tray: bool = False,
             on_quit: Callable[[], None] = lambda: None) -> OpenClickyApp:
@@ -142,6 +147,11 @@ def wire_up(dictation_key: str, start_recording: Callable[[], Any], transcribe: 
         ask=ask or (lambda question, screenshot, conversation: ask_model(question, screenshot, conversation, load_settings())),
         run_in_background=run_in_background,
         schedule=schedule,
+        # Spoken in Kokoro's voice when it is downloaded and "Speak answers" is on (read per answer).
+        prepare_voice=lambda: voice.prepare() if voice is not None and load_settings().speak_answers else None,
+        speak=lambda text: voice.speak(text, load_settings().language_code, load_settings().kokoro_speaker)
+        if voice is not None and load_settings().speak_answers else None,
+        stop_speaking=lambda: voice.stop() if voice is not None else None,
     ), pointer)
     asking_holder["asking"] = asking
 
@@ -243,14 +253,17 @@ def main(argv: list[str] | None = None) -> int:
     from gi.repository import GLib, Gtk
 
     log_file = applog.start()
-    # One helper process for the offline engine, shared by every take (it unloads itself when idle).
+    # One helper process for the offline engine, shared by every take (it unloads itself when idle),
+    # and one for the voice.
     offline_engine = offline.OfflineEngine()
+    answer_voice = voice_module.Voice()
     try:
         app = wire_up(dictation_key,
                   # The microphone is read for every take: one picked in Settings is used at once.
                   start_recording=lambda: MicrophoneRecording(microphone=load_settings().microphone),
                       transcribe=lambda wav_bytes: transcribe(wav_bytes, load_settings(), offline_engine),
                   prepare_transcription=lambda: offline_engine.prepare() if load_settings().dictation_engine in ("auto", "offline") else None,
+                  voice=answer_voice,
                       with_tray=True, on_quit=Gtk.main_quit)
         app.listener.start()
     except (ValueError, RuntimeError) as problem:
@@ -268,6 +281,8 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         app.listener.stop()
         offline_engine.unload()
+        answer_voice.stop()
+        answer_voice.unload()
     return 0
 
 

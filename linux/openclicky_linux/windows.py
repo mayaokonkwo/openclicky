@@ -23,6 +23,7 @@ gi.require_version("GdkX11", "3.0")
 from gi.repository import Gdk, GdkPixbuf, GdkX11, GLib, Gtk  # noqa: E402
 
 from . import autostart, offline  # noqa: E402
+from . import voice as voice_module  # noqa: E402
 from .recorder import MicrophoneRecording, RecorderUnavailable, default_microphone_name, level_of, list_microphones  # noqa: E402
 from .config import HOSTED_BACKEND_URL, LinuxSettings, environment_overrides, load_settings, save_settings  # noqa: E402
 from .presence import PRESENCE_LABELS  # noqa: E402
@@ -123,13 +124,27 @@ class SettingsWindow:
         layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.window.add(layout)
         self.fields: dict[str, Gtk.Widget] = {}
+        self._loaded_speaker: int | None = None
 
         self._heading(layout, "Dictation")
         self.fields["dictation_key"] = self._choice(layout, "Hold to dictate", DICTATION_KEY_CHOICES)
         self.fields["language_code"] = self._text(layout, "Language", "blank: the engine detects it (en, hi-IN, ta…)")
         self.fields["microphone"] = self._microphone_row(layout)
         self.fields["dictation_engine"] = self._choice(layout, "Engine", DICTATION_ENGINE_CHOICES)
-        self._offline_engine_row(layout)
+        self.offline_row = ModelRow(self, layout, "Offline engine", offline.PARAKEET, needs_player=False,
+                                    downloaded_line="Your words never leave this computer.",
+                                    not_downloaded_line="Parakeet, about {size} MB, 25 European languages, no key needed.")
+        # The names the tests (and the old row) use.
+        self.offline_status, self.offline_button = self.offline_row.status, self.offline_row.button
+        self.start_offline_download = self.offline_row.start_download
+        self._heading(layout, "Voice")
+        self.fields["speak_answers"] = Gtk.CheckButton(label="Speak answers (on this computer, in Kokoro's voice)")
+        self.fields["speak_answers"].connect("toggled", lambda _button: self._update_routes())
+        layout.pack_start(self.fields["speak_answers"], False, False, 0)
+        self.fields["kokoro_speaker"] = self._choice(layout, "Voice", tuple((str(speaker.id), speaker.label) for speaker in voice_module.SPEAKERS))
+        self.voice_row = ModelRow(self, layout, "Offline voice", voice_module.KOKORO, needs_player=True,
+                                  downloaded_line="Answers are spoken on this computer.",
+                                  not_downloaded_line="Kokoro, about {size} MB, the Mac app's offline voice.")
         self._heading(layout, "Pointer")
         self.fields["pointer_presence"] = self._choice(layout, "Show the pointer", POINTER_CHOICES)
         self._heading(layout, "Keys & account")
@@ -162,7 +177,8 @@ class SettingsWindow:
         buttons.pack_start(self.save_button, False, False, 0)
         layout.pack_start(buttons, False, False, 0)
         for widget in self.fields.values():
-            widget.connect("changed", lambda _widget: self._update_routes())
+            if not isinstance(widget, Gtk.CheckButton):
+                widget.connect("changed", lambda _widget: self._update_routes())
 
     # MARK: building
 
@@ -201,86 +217,6 @@ class SettingsWindow:
         layout.pack_start(meter, False, False, 0)
         self._microphone_test = None
         return combo
-
-    def _offline_engine_row(self, layout: Gtk.Box) -> None:
-        """The offline engine's state, with the one action that makes sense now: Download (with its
-        size), Cancel while downloading, or Remove once it is there."""
-        self.offline_status = Gtk.Label(xalign=0)
-        self.offline_status.set_line_wrap(True)
-        self.offline_button = Gtk.Button()
-        self.offline_button.connect("clicked", lambda _button: self._offline_button_clicked())
-        row = Gtk.Box(spacing=8)
-        row.pack_start(self.offline_status, True, True, 0)
-        row.pack_start(self.offline_button, False, False, 0)
-        self._row(layout, "Offline engine", row)
-        self.offline_progress = Gtk.ProgressBar()
-        self.offline_progress.set_margin_start(162)
-        self.offline_progress.set_no_show_all(True)
-        layout.pack_start(self.offline_progress, False, False, 0)
-        self._offline_download_cancelled: threading.Event | None = None
-
-    def _show_offline_state(self, message: str | None = None) -> None:
-        if self._offline_download_cancelled is not None:
-            return  # a download in progress shows its own progress
-        if not offline.is_engine_available():
-            self.offline_status.set_text(message or "Needs sherpa-onnx: pip install 'openclicky-linux[offline]'")
-            self.offline_button.set_label("Download")
-            self.offline_button.set_sensitive(False)
-        elif offline.is_installed():
-            self.offline_status.set_text(message or f"Downloaded ({offline.installed_size_bytes() // 1_000_000} MB). "
-                                         "Your words never leave this computer.")
-            self.offline_button.set_label("Remove")
-            self.offline_button.set_sensitive(True)
-        else:
-            self.offline_status.set_text(message or f"Not downloaded. Parakeet, about {offline.PARAKEET.size_bytes // 1_000_000} MB, "
-                                         "25 European languages, no key needed.")
-            self.offline_button.set_label("Download")
-            self.offline_button.set_sensitive(True)
-        self.offline_progress.hide()
-
-    def _offline_button_clicked(self) -> None:
-        if self._offline_download_cancelled is not None:
-            self._offline_download_cancelled.set()
-            return
-        if offline.is_installed():
-            offline.remove()
-            self._show_offline_state()
-            self._update_routes()
-            return
-        self.start_offline_download()
-
-    def start_offline_download(self, asset: "offline.ModelAsset | None" = None) -> None:
-        """Downloads in the background; progress and the outcome come back to the main loop."""
-        cancelled = threading.Event()
-        self._offline_download_cancelled = cancelled
-        self.offline_button.set_label("Cancel")
-        self.offline_progress.set_fraction(0)
-        self.offline_progress.show()
-        self.offline_status.set_text("Downloading…")
-
-        def progress(done: int, total: int) -> None:
-            GLib.idle_add(lambda: (self._show_offline_progress(done, total), False)[1])
-
-        def run() -> None:
-            try:
-                offline.download(asset or offline.PARAKEET, on_progress=progress, cancelled=cancelled)
-                outcome = None
-            except offline.OfflineEngineError as failure:
-                outcome = str(failure)
-            GLib.idle_add(lambda: (self._finish_offline_download(outcome), False)[1])
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def _show_offline_progress(self, done: int, total: int) -> None:
-        if self._offline_download_cancelled is None:
-            return
-        self.offline_progress.set_fraction(min(1.0, done / total) if total else 0)
-        self.offline_status.set_text(f"Downloading… {done // 1_000_000} of {total // 1_000_000} MB")
-
-    def _finish_offline_download(self, problem: str | None) -> None:
-        self._offline_download_cancelled = None
-        self._show_offline_state(f"Not downloaded: {problem}." if problem else None)
-        self._update_routes()
 
     def _fill_microphones(self, chosen: str | None) -> None:
         """Asked of the sound server each time Settings opens, so a headset plugged in since shows up."""
@@ -375,6 +311,12 @@ class SettingsWindow:
             value = getattr(settings, field_name)
             if field_name == "microphone":
                 self._fill_microphones(value)
+            elif field_name == "speak_answers":
+                widget.set_active(bool(value))
+            elif field_name == "kokoro_speaker":
+                self._loaded_speaker = value
+                chosen = voice_module.speaker_for(settings.language_code, value)
+                widget.set_active_id(str(chosen.id if chosen else voice_module.SPEAKERS[0].id))
             elif isinstance(widget, Gtk.ComboBoxText):
                 if not widget.set_active_id(value):
                     # A key picked by hand in shell.json that is not in the list is shown, not lost.
@@ -385,16 +327,28 @@ class SettingsWindow:
             else:
                 widget.set_text(value or "")
         self.start_at_login.set_active(autostart.is_enabled())
-        self._show_offline_state()
+        self.offline_row.show_state()
+        self.voice_row.show_state()
         self.status_label.set_text(f"Set in the environment, which wins while it is set: {', '.join(overridden)}." if overridden else "")
         self._update_routes()
 
     def values(self) -> dict[str, str | None]:
-        values = {field_name: (widget.get_active_id() if isinstance(widget, Gtk.ComboBoxText) else widget.get_text())
-                  for field_name, widget in self.fields.items()}
+        values = {}
+        for field_name, widget in self.fields.items():
+            if isinstance(widget, Gtk.CheckButton):
+                values[field_name] = widget.get_active()
+            elif isinstance(widget, Gtk.ComboBoxText):
+                values[field_name] = widget.get_active_id()
+            else:
+                values[field_name] = widget.get_text()
         # "System default" is no key at all in shell.json.
         if values.get("microphone") == MICROPHONE_DEFAULT_ID:
             values["microphone"] = None
+        # The voice is written only when it was picked: `kokoroSpeaker` is the Mac app's own key too,
+        # and the language's own first speaker is what an unset one means anyway.
+        default_speaker = voice_module.speaker_for(values.get("language_code"), None)
+        if self._loaded_speaker is None and default_speaker and values.get("kokoro_speaker") == str(default_speaker.id):
+            values["kokoro_speaker"] = None
         return values
 
     def _update_routes(self) -> None:
@@ -418,7 +372,13 @@ class SettingsWindow:
         answers = ("your Anthropic key" if has("anthropic_api_key") else "your OpenRouter key" if has("openrouter_api_key")
                    else "your OpenAI key" if has("openai_api_key")
                    else "your OpenClicky account" if has("account_token") else "nothing yet: add a key or a token")
-        self.routes_label.set_text(f"Dictation goes to {dictation}.\nAnswers come from {answers}.")
+        if not values.get("speak_answers"):
+            spoken = "Answers are shown, not spoken."
+        elif voice_module.is_ready():
+            spoken = "Answers are spoken on this computer."
+        else:
+            spoken = "Answers are shown; download the offline voice to hear them."
+        self.routes_label.set_text(f"Dictation goes to {dictation}.\nAnswers come from {answers}.\n{spoken}")
 
     def save(self) -> None:
         try:
@@ -442,6 +402,96 @@ class SettingsWindow:
     def show(self) -> None:
         self.load()
         present_with_focus(self.window)
+
+
+class ModelRow:
+    """A model's row in Settings (the offline engine, the offline voice): its state, and the one
+    action that makes sense now: Download (with its size), Cancel while downloading, or Remove."""
+
+    def __init__(self, window: "SettingsWindow", layout: Gtk.Box, title: str, asset: "offline.ModelAsset", needs_player: bool,
+                 downloaded_line: str, not_downloaded_line: str) -> None:
+        self.window = window
+        self.asset = asset
+        self.needs_player = needs_player
+        self.downloaded_line = downloaded_line
+        self.not_downloaded_line = not_downloaded_line
+        self.status = Gtk.Label(xalign=0)
+        self.status.set_line_wrap(True)
+        self.button = Gtk.Button()
+        self.button.connect("clicked", lambda _button: self._clicked())
+        row = Gtk.Box(spacing=8)
+        row.pack_start(self.status, True, True, 0)
+        row.pack_start(self.button, False, False, 0)
+        window._row(layout, title, row)
+        self.progress = Gtk.ProgressBar()
+        self.progress.set_margin_start(162)
+        self.progress.set_no_show_all(True)
+        layout.pack_start(self.progress, False, False, 0)
+        self._cancelled: threading.Event | None = None
+
+    def show_state(self, message: str | None = None) -> None:
+        if self._cancelled is not None:
+            return  # a download in progress shows its own progress
+        if not offline.is_engine_available():
+            self.status.set_text(message or "Needs sherpa-onnx: pip install 'openclicky-linux[offline]'")
+            self.button.set_label("Download")
+            self.button.set_sensitive(False)
+        elif offline.is_installed(self.asset):
+            missing_player = self.needs_player and voice_module.find_player() is None
+            self.status.set_text(message or (f"Downloaded ({offline.installed_size_bytes(self.asset) // 1_000_000} MB). "
+                                             + ("No audio player found: install pipewire or pulseaudio-utils." if missing_player
+                                                else self.downloaded_line)))
+            self.button.set_label("Remove")
+            self.button.set_sensitive(True)
+        else:
+            self.status.set_text(message or "Not downloaded. " + self.not_downloaded_line.format(size=self.asset.size_bytes // 1_000_000))
+            self.button.set_label("Download")
+            self.button.set_sensitive(True)
+        self.progress.hide()
+
+    def _clicked(self) -> None:
+        if self._cancelled is not None:
+            self._cancelled.set()
+            return
+        if offline.is_installed(self.asset):
+            offline.remove(self.asset)
+            self.show_state()
+            self.window._update_routes()
+            return
+        self.start_download()
+
+    def start_download(self, asset: "offline.ModelAsset | None" = None) -> None:
+        """Downloads in the background; progress and the outcome come back to the main loop."""
+        cancelled = threading.Event()
+        self._cancelled = cancelled
+        self.button.set_label("Cancel")
+        self.progress.set_fraction(0)
+        self.progress.show()
+        self.status.set_text("Downloading…")
+
+        def progress(done: int, total: int) -> None:
+            GLib.idle_add(lambda: (self._show_progress(done, total), False)[1])
+
+        def run() -> None:
+            try:
+                offline.download(asset or self.asset, on_progress=progress, cancelled=cancelled)
+                outcome = None
+            except offline.OfflineEngineError as failure:
+                outcome = str(failure)
+            GLib.idle_add(lambda: (self._finished(outcome), False)[1])
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _show_progress(self, done: int, total: int) -> None:
+        if self._cancelled is None:
+            return
+        self.progress.set_fraction(min(1.0, done / total) if total else 0)
+        self.status.set_text(f"Downloading… {done // 1_000_000} of {total // 1_000_000} MB")
+
+    def _finished(self, problem: str | None) -> None:
+        self._cancelled = None
+        self.show_state(f"Not downloaded: {problem}." if problem else None)
+        self.window._update_routes()
 
 
 def pointer_icon(size: int = 22) -> GdkPixbuf.Pixbuf:

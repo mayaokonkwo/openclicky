@@ -11,7 +11,7 @@
   mouse**, or only while answering (Settings → Show the pointer).
 - **Settings and the tray icon:** Ask…, Settings…, Quit.
 
-Not on Linux yet: spoken answers, the agent lane.
+Answers are spoken on this computer (Kokoro, the Mac app's offline voice). Not on Linux yet: the agent lane.
 
 The user guide, with pictures, is [docs/linux.md](../docs/linux.md). This page is for building,
 testing and reviewing it.
@@ -89,6 +89,7 @@ the Save and Delete buttons and stays put for "what is the capital of france?".
 | `ask.py` | The question + screenshot to a model, in the Mac's order: own Anthropic key → Messages; OpenRouter key → its chat completions; own OpenAI key → chat completions; account → backend `POST /chat`. The Mac's ask prompt, for a read (not spoken) answer. |
 | `guided.py` | Step by step guidance: the [NEXT] marker, which click or key finishes a step and how long to let the screen settle, the "what's next?" request, the prompt section. |
 | `pointing.py` | The `[POINT:x,y:label:screenN]` tag (the Mac's parser, ported); monitors ordered mouse first, and a point on screen N mapped back to the desktop; the arc and timing of a flight. |
+| `voice.py`, `voice_helper.py` | Spoken answers: the Mac's Kokoro v1.0 (same model, SHA-256 and speakers) through sherpa-onnx, in a helper process that loads as a question is asked; the first sentence spoken at once, the rest generated while it plays; esc or a new question stops it. |
 | `presence.py` | When the following pointer shows: the Mac's `PointerPresence` (always, while moving, after a shake, with its shake detector) ported with its tests, plus "only while answering". |
 | `pointer_view.py` | The pointer (an orange window cut to a triangle with SHAPE, click-through) and its typed-out caption; follows the mouse, flies, comes back. |
 | `windows.py` | The ask box, the Settings window, the tray icon. |
@@ -122,7 +123,7 @@ microphone, nothing on your screen):
 ```bash
 cd linux
 python3 -m venv --system-site-packages .venv && .venv/bin/pip install -e '.[test]'
-.venv/bin/python -m pytest             # 159 tests; the X11 ones start their own Xvfb (with .[offline] and the model downloaded, real speech too)
+.venv/bin/python -m pytest             # 169 tests; the X11 ones start their own Xvfb (with .[offline] and the model downloaded, real speech too)
 OPENCLICKY_SCREENSHOT_DIR=/tmp/shots .venv/bin/python -m pytest tests/test_x11.py   # and look at /tmp/shots
 scripts/make-doc-screenshots.sh        # remakes docs/media/linux/ (a scripted answer; --live uses your key)
 ```
@@ -145,6 +146,7 @@ together:
 | `guided.py`, guide part of `companion.py` | `GuidedSteps.swift`, `CompanionManager.waitForTheGuidedStepToBeDone` (+ `GuidedStepsTests`, ported) | the [NEXT] marker, the prompt section, settle times (1.5 s after a click, 1.2 s after Return/Tab, 4 s while typing), 120 s idle, 15 steps, the "what's next?" that repeats the goal |
 | `pointing.py` | `CompanionManager.parsePointingCoordinates` | the tag grammar, leading/trailing tags, no recursion on two tags |
 | `offline.py`, `offline_helper.py` | `Parakeet/ParakeetDictation.swift`, `ParakeetEngine.swift`, `Sherpa/ModelDownload.swift` | the model, its URL and SHA-256, 80 mel features at 16 kHz, a NeMo transducer, at most four threads; a helper process that loads as a take starts and ends after 180 s idle |
+| `voice.py`, `voice_helper.py` | `Kokoro/KokoroVoice.swift`, `KokoroEngine.swift`, `SpokenChunker.swift` | the model, its URL and SHA-256, the speakers and language hints, the lexicons; the first sentence alone, then pieces of at least 120 characters; a helper process that ends after 180 s idle |
 | `presence.py` | `PointerPresence.swift` (+ its tests, ported case for case) | the shake detector's numbers, the 3 s rest |
 | `config.py`, `space.py` | `OpenClickyConfiguration.swift`, `Dictation/DictationSpace.swift` | the same `shell.json` keys (`openaiApiKey`, `anthropicApiKey`, `openRouterApiKey`, `token`, `backendUrl`, `language`, `answerModels`) and dictionary files; Linux adds only `linuxDictationKey` and `linuxPointer` |
 

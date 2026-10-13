@@ -6,7 +6,8 @@ to their vendor; `answerModels.openrouter` picks the OpenRouter model, as on the
 English when unset), and the Linux-only `linuxDictationKey` (an X keysym name; `Control_L`, where
 fn sits on a Mac keyboard, by default: Linux never sees fn), `linuxPointer` ("always", "whileMoving", "onShake", or
 "whenAnswering": see `presence.py`), `linuxMicrophone` (a sound server source name; unset, the
-system default) and `linuxDictationEngine` ("auto", "offline", "openai" or "account"). `BACKEND_URL`, `OPENCLICKY_OPENAI_KEY` and `OPENCLICKY_ANTHROPIC_KEY` in the
+system default), `linuxDictationEngine` ("auto", "offline", "openai" or "account") and
+`linuxSpeakAnswers` (false: captions only); `kokoroSpeaker` is the Mac app's own key for the voice. `BACKEND_URL`, `OPENCLICKY_OPENAI_KEY` and `OPENCLICKY_ANTHROPIC_KEY` in the
 environment win over the file, as on the Mac.
 
 `save_settings` writes the Settings window's fields back and leaves every other key as it was: the
@@ -46,6 +47,10 @@ class LinuxSettings:
     microphone: str | None = None
     # "auto" | "offline" | "openai" | "account" (see transcriber.py).
     dictation_engine: str = "auto"
+    # Answers spoken in Kokoro's voice, once it is downloaded (off: captions only).
+    speak_answers: bool = True
+    # Kokoro's speaker (the Mac app's `kokoroSpeaker`); None: the reply language's first.
+    kokoro_speaker: int | None = None
 
     @property
     def bare_language_code(self) -> str | None:
@@ -84,6 +89,8 @@ def load_settings(shell_json_path: Path | None = None, environment: dict[str, st
         pointer_presence=raw.get("linuxPointer") if raw.get("linuxPointer") in POINTER_PRESENCES else "always",
         microphone=_cleaned(raw.get("linuxMicrophone")),
         dictation_engine=raw.get("linuxDictationEngine") if raw.get("linuxDictationEngine") in ("auto", "offline", "openai", "account") else "auto",
+        speak_answers=raw.get("linuxSpeakAnswers") is not False and raw.get("linuxSpeakAnswers") != "false",
+        kokoro_speaker=raw.get("kokoroSpeaker") if isinstance(raw.get("kokoroSpeaker"), int) else None,
     )
 
 
@@ -114,6 +121,8 @@ SETTINGS_FIELDS = {
     "pointer_presence": "linuxPointer",
     "microphone": "linuxMicrophone",
     "dictation_engine": "linuxDictationEngine",
+    "speak_answers": "linuxSpeakAnswers",
+    "kokoro_speaker": "kokoroSpeaker",
 }
 
 
@@ -135,6 +144,19 @@ def save_settings(changes: dict[str, str | None], shell_json_path: Path | None =
         raise ValueError(f"{path} is not a json object; fix or remove it first")
     for field_name, value in changes.items():
         json_key = SETTINGS_FIELDS[field_name]
+        # Not text: speaking answers is a switch (only "off" is written), the speaker a number.
+        if field_name == "speak_answers":
+            if value in (False, "false"):
+                current[json_key] = False
+            else:
+                current.pop(json_key, None)
+            continue
+        if field_name == "kokoro_speaker":
+            if isinstance(value, int) or (isinstance(value, str) and value.isdigit()):
+                current[json_key] = int(value)
+            else:
+                current.pop(json_key, None)
+            continue
         cleaned = _cleaned(value)
         # A default is no key at all: the file holds only what the person changed.
         is_default = ((field_name == "backend_url" and cleaned is not None and cleaned.rstrip("/") == HOSTED_BACKEND_URL)

@@ -64,7 +64,8 @@ def model_folder(asset: ModelAsset = PARAKEET) -> Path:
 
 def is_installed(asset: ModelAsset = PARAKEET) -> bool:
     folder = model_folder(asset)
-    return all((folder / name).is_file() for name in asset.files)
+    # Files, or folders (Kokoro's espeak-ng-data and dict).
+    return all((folder / name).exists() for name in asset.files)
 
 
 def is_ready(asset: ModelAsset = PARAKEET) -> bool:
@@ -120,20 +121,20 @@ def download(asset: ModelAsset = PARAKEET, on_progress: Callable[[int, int], Non
             # Only plain files and folders, only inside the destination (the "data" filter).
             model_archive.extractall(unpacked, filter="data")
         source = unpacked / asset.folder_name
-        if not all((source / name).is_file() for name in asset.files):
+        if not all((source / name).exists() for name in asset.files):
             raise OfflineEngineError("the download is missing model files")
         destination = model_folder(asset)
         if destination.exists():
             shutil.rmtree(destination)
         source.rename(destination)
-        applog.append(f"offline engine: installed ({installed_size_bytes(asset) // 1_000_000} MB)")
+        applog.append(f"offline model {asset.folder_name}: installed ({installed_size_bytes(asset) // 1_000_000} MB)")
     finally:
         shutil.rmtree(working, ignore_errors=True)
 
 
 def remove(asset: ModelAsset = PARAKEET) -> None:
     shutil.rmtree(model_folder(asset), ignore_errors=True)
-    applog.append("offline engine: removed")
+    applog.append(f"offline model {asset.folder_name}: removed")
 
 
 class OfflineEngine:
