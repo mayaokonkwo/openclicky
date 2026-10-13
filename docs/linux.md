@@ -4,10 +4,9 @@ An early Linux client for OpenClicky. It runs against the same backend contract 
 `~/.openclicky` files as the Mac app, but is its own small program: Python and GTK 3 on X11, under
 [`linux/`](../linux). Everything in the main README is about the Mac app; this page is the Linux one.
 
-What it does today: **ask about your screen by text** (the pointer answers and points), **step by
-step guidance**, **the pointer** itself (including shake to appear), **dictation** (untested with a
-real microphone so far), **Settings** and a **tray icon**. Not yet: spoken answers, asking by voice,
-Wayland.
+What it does today: **ask about your screen** by typing or out loud (the pointer answers and
+points), **step by step guidance**, **the pointer** itself (including shake to appear), **dictation** (untested with a
+real microphone so far), **Settings** and a **tray icon**. Not yet: spoken answers, Wayland.
 
 ## Ask about your screen
 
@@ -27,6 +26,14 @@ pointer flies to it and types the answer beside itself:
 is on the Save button the answer names.* A question that is not about the screen ("what is the
 capital of france?") is answered by the mouse without pointing. **Esc** dismisses an answer and the
 pointer comes back to the mouse. Follow-ups remember the last ten exchanges.
+
+## Ask out loud
+
+Hold **left ctrl + left alt** (the Mac's control + option), ask your question, let go. It is
+transcribed (offline, when the offline engine is downloaded) and answered exactly like a typed
+question: the pointer flies to what it is about, types the answer beside itself, and guides you step
+by step. Adding left alt while you are already dictating turns that take into a question. Answers are
+shown, not spoken, for now.
 
 ## Step by step
 
@@ -57,7 +64,9 @@ shows while it is following you; while it is answering or pointing it always sho
 
 ## Dictate
 
-Hold **right ctrl**, speak, let go. The orb at the bottom of the screen shows what is happening:
+Hold **left ctrl** on its own, speak, let go: it is where fn is on a Mac keyboard. (Ctrl shortcuts
+such as ctrl+C still work as always: dictation only starts once ctrl has been held alone for a third
+of a second.) The orb at the bottom of the screen shows what is happening:
 
 ![A notes app with the orb at the bottom saying "listening · release to transcribe"](media/linux/dictation-listening.png)
 
@@ -72,10 +81,13 @@ tried with a real microphone.*
 
 | Do | Get |
 |---|---|
-| Hold right ctrl, speak, let go | The words are typed into the window in front |
-| Tap right ctrl, speak, tap again | The same, without holding the key |
-| Tap right ctrl twice, or press esc | Cancel |
-| Right ctrl + another key | A shortcut, not dictation: nothing is typed |
+| Hold left ctrl, speak, let go | The words are typed into the window in front |
+| Hold left ctrl + left alt, speak, let go | A question for the pointer (see below), nothing typed |
+| Esc while it listens | Cancel |
+| Left ctrl + another key | A shortcut, not dictation: nothing is typed |
+
+Another dictation key (Settings → Hold to dictate: right ctrl, right alt, right super or the menu
+key) listens at once, and can also be tapped to start and tapped again to finish.
 
 The words go only into the window that was in front when you pressed the key. If another window is
 in front by the time they are ready, they are put on the clipboard instead ("copied, press ctrl+v").

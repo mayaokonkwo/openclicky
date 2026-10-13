@@ -714,5 +714,79 @@ def scenario_offline_settings() -> dict:
     return {"states": states, "routes_before": routes_before, "routes_after": routes_after,
             "installed_after_remove": offline.is_installed()}
 
+
+def scenario_left_ctrl() -> dict:
+    """The default keys: left ctrl held dictates, ctrl+C is a shortcut, two taps open the ask box,
+    and left ctrl + left alt asks the pointer out loud."""
+    window, save_center = app_window_with_a_save_button()
+    entry = Gtk.Entry()
+    window.get_child().put(entry, 40, 120)
+    window.show_all()
+    pump(0.3)
+    keyboard.set_input_focus(window.get_window().get_xid(), X.RevertToParent, X.CurrentTime)
+    keyboard.sync()
+    entry.grab_focus()
+    pump(0.3)
+    transcripts = iter(["um, buy more lemons", "where do i save this"])
+    questions = []
+
+    def stand_in_model(question, pictures, conversation):
+        questions.append(question)
+        return f"[POINT:{save_center[0]},{save_center[1]}:save button] that save button keeps it."
+
+    app = wire_up("Control_L", start_recording=StandInRecording, transcribe=lambda _wav: next(transcripts), ask=stand_in_model)
+    orb_history: list = []
+    app.dictation.orb.listeners.append(lambda orb: orb_history.append([orb.phase, orb.message]))
+    app.listener.start()
+    move_mouse(300, 400)
+    pump(0.3)
+    seen = {}
+
+    # 1. ctrl+C: a shortcut; the microphone never opens.
+    key("Control_L", True)
+    pump(0.05)
+    tap("c")
+    pump(0.5)
+    key("Control_L", False)
+    pump(0.4)
+    seen["ctrl_c_listened"] = any(phase == "listening" for phase, _ in orb_history)
+
+    # 2. Held on its own: dictation into the text box.
+    key("Control_L", True)
+    pump(0.7)
+    seen["listening_while_held"] = app.dictation.state.value
+    key("Control_L", False)
+    pump(5, until=lambda: bool(entry.get_text()))
+    seen["text_box"] = entry.get_text()
+    pump(0.6)
+
+    # 3. Two quick taps: the ask box.
+    tap("Control_L")
+    pump(0.1)
+    tap("Control_L")
+    pump(2, until=lambda: app.composer.is_open)
+    seen["ask_box_opened"] = app.composer.is_open
+    app.composer.hide()
+    pump(0.6)
+
+    # 4. Held with left alt: a spoken question; the pointer answers and points, nothing is typed.
+    key("Alt_L", True)
+    key("Control_L", True)
+    pump(0.7)
+    seen["asking_hint"] = app.dictation.orb.message
+    key("Control_L", False)
+    key("Alt_L", False)
+    pump(8, until=lambda: app.pointer.mode == "pointing" and "keeps it" in app.pointer.caption_label.get_text())
+    pump(0.3)
+    seen["questions"] = questions
+    seen["pointer_at"] = [round(value) for value in app.pointer.position]
+    seen["save_center"] = list(save_center)
+    seen["pointer_mode"] = app.pointer.mode
+    seen["caption"] = app.pointer.caption_label.get_text()
+    seen["pointer_on_save"] = seen["pointer_at"] == list(save_center)
+    seen["text_box_after_question"] = entry.get_text()
+    app.listener.stop()
+    return seen
+
 if __name__ == "__main__":
     print(json.dumps(globals()[f"scenario_{sys.argv[1]}"]()))

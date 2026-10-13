@@ -265,3 +265,61 @@ def test_esc_handled_while_the_words_are_delivered_wins():
     assert controller.state is TakeState.IDLE
     assert orb.phase == "failed" and orb.message == "cancelled"
     assert controller.finished_takes == []
+
+
+# MARK: a spoken question (left ctrl + left alt)
+
+from openclicky_linux.gestures import AskJoined  # noqa: E402
+
+
+def test_a_take_held_with_alt_goes_to_the_pointer_and_types_nothing():
+    desktop, controller, orb = make()
+    questions = []
+    controller.host.ask_question = questions.append
+    desktop.transcript = "um, where do i save this"
+    controller.handle(DictationPressed(ask=True))
+    assert (orb.phase, orb.message) == ("listening", "ask your question, then let go")
+    controller.handle(DictationReleased(was_tap=False))
+    desktop.finish_background_work()
+    assert questions == ["Where do i save this"]
+    assert desktop.pasted == [] and desktop.copied == []
+    assert controller.state is TakeState.IDLE
+    assert orb.phase == "idle"
+
+
+def test_alt_joining_a_take_that_listens_turns_it_into_a_question():
+    desktop, controller, orb = make()
+    questions = []
+    controller.host.ask_question = questions.append
+    controller.handle(DictationPressed())
+    controller.handle(AskJoined())
+    assert orb.message == "ask your question, then let go"
+    controller.handle(DictationReleased(was_tap=False))
+    desktop.finish_background_work()
+    assert questions == ["Hello there"] and desktop.pasted == []
+
+
+def test_a_question_nobody_said_asks_nothing():
+    desktop, controller, orb = make()
+    questions = []
+    controller.host.ask_question = questions.append
+    desktop.transcript = "  "
+    controller.handle(DictationPressed(ask=True))
+    controller.handle(DictationReleased(was_tap=False))
+    desktop.finish_background_work()
+    assert questions == []
+    assert (orb.phase, orb.message) == ("failed", "didn't catch that")
+
+
+def test_the_next_take_is_dictation_again():
+    desktop, controller, orb = make()
+    questions = []
+    controller.host.ask_question = questions.append
+    controller.handle(DictationPressed(ask=True))
+    controller.handle(DictationReleased(was_tap=False))
+    desktop.finish_background_work()
+    controller.handle(DictationPressed())
+    controller.handle(DictationReleased(was_tap=False))
+    desktop.finish_background_work()
+    assert len(questions) == 1
+    assert [text for text, _ in desktop.pasted] == ["Hello there"]

@@ -150,7 +150,9 @@ class DictationKeyListener:
                  on_other_key_down: Callable[[bool], None], display_name: str | None = None,
                  composer_key_name: str | None = "Control_L",
                  on_composer_key: Callable[[bool, float], None] = lambda _is_down, _at_seconds: None,
-                 on_step_input: Callable[[str], None] = lambda _kind: None) -> None:
+                 on_step_input: Callable[[str], None] = lambda _kind: None,
+                 ask_key_name: str | None = "Alt_L",
+                 on_ask_key: Callable[[bool], None] = lambda _is_down: None) -> None:
         self._control_display = xdisplay.Display(display_name)
         self._record_display = xdisplay.Display(display_name)
         if not self._record_display.has_extension("RECORD"):
@@ -162,6 +164,10 @@ class DictationKeyListener:
         if not self.dictation_keycodes:
             raise ValueError(f"no key on this keyboard produces {dictation_key_name}")
         self.escape_keycodes = self._keycodes_for(XK.XK_Escape)
+        # Left alt, held with the dictation key: the take is a spoken question (the Mac's ⌃⌥).
+        ask_keysym = XK.string_to_keysym(ask_key_name) if ask_key_name else X.NoSymbol
+        self.ask_keycodes = (self._keycodes_for(ask_keysym) - self.dictation_keycodes) if ask_keysym != X.NoSymbol else set()
+        self._on_ask_key = on_ask_key
         self.step_keycodes = set().union(*(self._keycodes_for(keysym) for keysym in (XK.XK_Return, XK.XK_KP_Enter, XK.XK_Tab)))
         self._on_step_input = on_step_input
         # The key tapped twice for the ask box; never the dictation key itself.
@@ -237,6 +243,8 @@ class DictationKeyListener:
                 self._on_dictation_key(is_down, event.time / 1000.0)
             elif event.detail in self.composer_keycodes:
                 self._on_composer_key(is_down, event.time / 1000.0)
+            elif event.detail in self.ask_keycodes:
+                self._on_ask_key(is_down)
             elif is_down:
                 is_escape = event.detail in self.escape_keycodes
                 self._on_other_key_down(is_escape)

@@ -29,7 +29,8 @@ from .presence import PRESENCE_LABELS  # noqa: E402
 from .pointer_view import POINTER_OUTLINE, POINTER_HEIGHT, POINTER_WIDTH  # noqa: E402
 from .x11 import polygon_rows  # noqa: E402
 
-DICTATION_KEY_CHOICES = (("Control_R", "right ctrl"), ("Alt_R", "right alt"), ("Super_R", "right super"), ("Menu", "menu key"))
+DICTATION_KEY_CHOICES = (("Control_L", "left ctrl (where fn is on a Mac)"), ("Control_R", "right ctrl"), ("Alt_R", "right alt"),
+                         ("Super_R", "right super"), ("Menu", "menu key"))
 POINTER_CHOICES = tuple(PRESENCE_LABELS.items())
 DICTATION_ENGINE_CHOICES = (("auto", "Automatic (offline when downloaded)"), ("offline", "Offline, on this computer"),
                             ("openai", "OpenAI (your key)"), ("account", "OpenClicky account"))

@@ -1,6 +1,6 @@
 # OpenClicky for Linux (early)
 
-- **Dictate:** hold **right ctrl**, speak, let go: your words are typed where your cursor is,
+- **Dictate:** hold **left ctrl** (where fn is on a Mac), speak, let go: your words are typed where your cursor is,
   cleaned up the way the Mac app cleans them (fillers out, your dictionary, spoken shortcuts,
   sentence case). A small orb at the bottom of the screen shows each step.
 - **Ask:** tap **left ctrl twice**, type a question about what is on your screen, press Enter. The
@@ -11,7 +11,7 @@
   mouse**, or only while answering (Settings → Show the pointer).
 - **Settings and the tray icon:** Ask…, Settings…, Quit.
 
-Not on Linux yet: spoken answers, asking by voice, the agent lane.
+Not on Linux yet: spoken answers, the agent lane.
 
 The user guide, with pictures, is [docs/linux.md](../docs/linux.md). This page is for building,
 testing and reviewing it.
@@ -31,7 +31,7 @@ testing and reviewing it.
     `answerModels.openrouter` in shell.json names another), else the OpenAI key, else the account
 
   An own key goes straight to its vendor and never to the backend. The language pins dictation and
-  answers; the dictation key can be right ctrl, right alt, right super or the menu key (a modifier
+  answers; the dictation key can be left ctrl (the default), right ctrl, right alt, right super or the menu key (a modifier
   is best, since other keys auto-repeat); the pointer can stay beside the mouse or show only while
   answering, or appear only while the mouse moves or after a shake.
 
@@ -47,10 +47,10 @@ python3 -m venv --system-site-packages .venv     # system site packages: GTK com
 
 | Do | Get |
 |---|---|
-| Hold right ctrl, speak, let go | The words are pasted into the window in front |
-| Tap right ctrl, speak, tap again | The same, hands off the key |
-| Tap right ctrl twice, or esc | Cancel |
-| Right ctrl + another key (a shortcut) | Not a take; nothing is typed |
+| Hold left ctrl on its own, speak, let go | The words are pasted into the window in front |
+| Hold left ctrl + left alt, speak, let go | A spoken question: the pointer answers and guides |
+| Esc | Cancel |
+| Left ctrl + another key (a shortcut) | Not a take; nothing is typed, and the microphone never opens |
 | Tap left ctrl twice | The ask box (Enter sends, esc closes) |
 | Esc while an answer shows | Dismiss it; the pointer comes back to the mouse |
 
@@ -94,7 +94,7 @@ the Save and Delete buttons and stays put for "what is the capital of france?".
 | `windows.py` | The ask box, the Settings window, the tray icon. |
 | `screen.py` | The screenshots: one per monitor, the one with the mouse first, each with its longest side ≤ 1568 px, PNG, with its scale and its place on the desktop. |
 | `controller.py` | One take at a time (idle → listening → finishing), the Mac's `DictationTakeController` in small. Reaches the desktop only through `DictationHost`. |
-| `gestures.py` | Hold, tap, double tap, esc and "a shortcut, not a take" from raw key downs and ups, with the Mac's timings. |
+| `gestures.py` | Hold, tap, double tap, esc and "a shortcut, not a take" from raw key downs and ups, with the Mac's timings; left ctrl, shared with the ask box, listens only once held alone for 0.3 s; left alt with it asks the pointer. |
 | `x11.py` | The window in front (`_NET_ACTIVE_WINDOW`, `WM_CLASS`), the paste keystroke (XTEST), the listen-only key and click watcher (RECORD), window shapes (SHAPE). |
 | `desktop.py` | GTK 3: the clipboard paste and restore, the orb (a popup window that never takes the focus). |
 | `recorder.py` | 16 kHz mono PCM from `parecord` (the microphone picked in Settings) or `arecord`, wrapped as WAV; the microphones the sound server knows (`pactl`, monitors left out); loudness for the Test meter. |
@@ -122,7 +122,7 @@ microphone, nothing on your screen):
 ```bash
 cd linux
 python3 -m venv --system-site-packages .venv && .venv/bin/pip install -e '.[test]'
-.venv/bin/python -m pytest             # 144 tests; the X11 ones start their own Xvfb (with .[offline] and the model downloaded, real speech too)
+.venv/bin/python -m pytest             # 159 tests; the X11 ones start their own Xvfb (with .[offline] and the model downloaded, real speech too)
 OPENCLICKY_SCREENSHOT_DIR=/tmp/shots .venv/bin/python -m pytest tests/test_x11.py   # and look at /tmp/shots
 scripts/make-doc-screenshots.sh        # remakes docs/media/linux/ (a scripted answer; --live uses your key)
 ```
@@ -138,7 +138,7 @@ together:
 | Linux | Mac counterpart | Kept the same |
 |---|---|---|
 | `controller.py` | `Dictation/DictationTakeController.swift` | take ids, hold/tap/double tap/esc, "a shortcut, not a take", paste only into the window from the press, the orb's sentences (ctrl where the Mac says ⌘) |
-| `gestures.py` | `CompanionShortcutRecognizer.swift` | the 350 ms tap and 450 ms double-tap windows; left ctrl twice is the Mac's ⌃ ×2 |
+| `gestures.py` | `CompanionShortcutRecognizer.swift` | the 350 ms tap and 450 ms double-tap windows; left ctrl twice is the Mac's ⌃ ×2, left ctrl held is fn, left ctrl + left alt is ⌃⌥ (talk) |
 | `formatter.py` | `Dictation/TakeFormatter.swift` (`formatLocally`) | fillers, dictionary (longest alias first), whole-take shortcuts, sentence case |
 | `transcriber.py`, `ask.py` | `ProviderRoute.swift`, `ClaudeAPI.swift`, `AnswerProvider.swift`, `CompanionManager.screensForAsk` | own key straight to its vendor, never to the backend; the answer order Anthropic → OpenRouter → OpenAI → account; the models; one picture per monitor, mouse's first, at most two on an account |
 | `ask.py` (prompt) | `CompanionManager.companionVoiceResponseSystemPrompt` | its rules and the pointing section, reworded for an answer that is read rather than heard |

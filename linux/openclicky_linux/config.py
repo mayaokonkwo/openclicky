@@ -3,8 +3,8 @@
 Keys read here: `openaiApiKey`, `anthropicApiKey` and `openRouterApiKey` (own keys, sent straight
 to their vendor; `answerModels.openrouter` picks the OpenRouter model, as on the Mac),
 `token` and `backendUrl` (an OpenClicky account, the fallback), `language` (dictation and answers;
-English when unset), and the Linux-only `linuxDictationKey` (an X keysym name, `Control_R` by
-default: Linux never sees fn), `linuxPointer` ("always", "whileMoving", "onShake", or
+English when unset), and the Linux-only `linuxDictationKey` (an X keysym name; `Control_L`, where
+fn sits on a Mac keyboard, by default: Linux never sees fn), `linuxPointer` ("always", "whileMoving", "onShake", or
 "whenAnswering": see `presence.py`), `linuxMicrophone` (a sound server source name; unset, the
 system default) and `linuxDictationEngine` ("auto", "offline", "openai" or "account"). `BACKEND_URL`, `OPENCLICKY_OPENAI_KEY` and `OPENCLICKY_ANTHROPIC_KEY` in the
 environment win over the file, as on the Mac.
@@ -22,7 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 HOSTED_BACKEND_URL = "https://api.openclicky.flowsxr.com"
-DEFAULT_DICTATION_KEY = "Control_R"
+# Left ctrl, where fn is on a Mac keyboard (the Mac app's dictation key).
+DEFAULT_DICTATION_KEY = "Control_L"
 POINTER_PRESENCES = ("always", "whileMoving", "onShake", "whenAnswering")
 
 
@@ -137,7 +138,8 @@ def save_settings(changes: dict[str, str | None], shell_json_path: Path | None =
         cleaned = _cleaned(value)
         # A default is no key at all: the file holds only what the person changed.
         is_default = ((field_name == "backend_url" and cleaned is not None and cleaned.rstrip("/") == HOSTED_BACKEND_URL)
-                      or (field_name == "dictation_engine" and cleaned == "auto"))
+                      or (field_name == "dictation_engine" and cleaned == "auto")
+                      or (field_name == "dictation_key" and cleaned == DEFAULT_DICTATION_KEY))
         if cleaned is None or is_default:
             current.pop(json_key, None)
         else:

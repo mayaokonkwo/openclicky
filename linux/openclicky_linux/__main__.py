@@ -20,7 +20,10 @@ from . import applog, offline
 from .ask import AskError, Conversation, Screenshot, ask as ask_model, request_for
 from .config import LinuxSettings, load_settings
 from .controller import DictationHost, DictationTakeController, OrbModel
-from .gestures import DictationGestureRecognizer, EscapePressed, TextComposerRequested
+from .gestures import HOLD_DELAY_SECONDS, DictationGestureRecognizer, EscapePressed, HoldStarted, TextComposerRequested
+
+# Tapped twice, the ask box; held on its own, dictation (when it is the dictation key, the default).
+COMPOSER_KEY = "Control_L"
 from .recorder import MicrophoneRecording, RecorderUnavailable, find_recorder_command
 from .space import load_space
 from .transcriber import TranscriptionError, route_for, transcribe
@@ -30,7 +33,7 @@ from .x11 import is_wayland_session
 def _describe_setup(dictation_key: str) -> int:
     settings = load_settings()
     problems = 0
-    print(f"dictation key: {dictation_key} (ask: tap Control_L twice)")
+    print(f"dictation key: {dictation_key} (ask by voice: hold it with Alt_L; ask by typing: tap Control_L twice)")
     try:
         print(f"recorder: {' '.join(find_recorder_command())}")
     except RecorderUnavailable as missing:
@@ -92,7 +95,10 @@ def wire_up(dictation_key: str, start_recording: Callable[[], Any], transcribe: 
     orb = OrbModel()
     # Kept alive by the orb, which holds its update method.
     OrbWindow(orb)
-    recognizer = DictationGestureRecognizer()
+    # Left ctrl is both the dictation key and the ask box's double tap: it waits before it listens.
+    recognizer = DictationGestureRecognizer(shares_key_with_the_ask_box=dictation_key == COMPOSER_KEY)
+    # The listener thread and the hold timer both feed the recognizer: one at a time.
+    recognizer_lock = threading.Lock()
     listener_holder: dict[str, DictationKeyListener] = {}
     dictation_holder: dict = {}
     paster = ClipboardPaster(xlib_display, before_keystroke=lambda: listener_holder["listener"].ignore_keys_for(0.4),
@@ -120,6 +126,8 @@ def wire_up(dictation_key: str, start_recording: Callable[[], Any], transcribe: 
         run_in_background=run_in_background,
         schedule=schedule,
         prepare_transcription=prepare_transcription,
+        # A spoken question goes where a typed one does: the pointer answers it, and guides.
+        ask_question=lambda question: asking_holder["asking"].submit(question),
     ), orb)
     dictation_holder["dictation"] = dictation
 
@@ -155,17 +163,31 @@ def wire_up(dictation_key: str, start_recording: Callable[[], Any], transcribe: 
 
     def deliver(events: list) -> None:
         for event in events:
+            if isinstance(event, HoldStarted):
+                # The take starts only if the key is still down, on its own, when the delay is up.
+                timer = threading.Timer(HOLD_DELAY_SECONDS, lambda press_id=event.press_id: deliver(recognize(
+                    lambda: recognizer.hold_elapsed(press_id))))
+                timer.daemon = True
+                timer.start()
+                continue
             GLib.idle_add(lambda event=event: (handle(event), False)[1])
+
+    def recognize(step: Callable[[], list]) -> list:
+        with recognizer_lock:
+            return step()
 
     listener = DictationKeyListener(
         dictation_key,
-        on_dictation_key=lambda is_down, at_seconds: deliver(
-            recognizer.dictation_key_down(at_seconds) if is_down else recognizer.dictation_key_up(at_seconds)),
+        on_dictation_key=lambda is_down, at_seconds: deliver(recognize(
+            lambda: recognizer.dictation_key_down(at_seconds) if is_down else recognizer.dictation_key_up(at_seconds))),
         # On the key watcher's thread, so the ask box's state is read as the key goes down: an esc
         # that closes the box only closes it.
-        on_other_key_down=lambda is_escape: deliver(recognizer.other_key_down(is_escape and not composer.is_open_for_key_watcher)),
-        on_composer_key=lambda is_down, at_seconds: deliver(
-            recognizer.composer_key_down(at_seconds) if is_down else recognizer.composer_key_up(at_seconds)),
+        on_other_key_down=lambda is_escape: deliver(recognize(
+            lambda: recognizer.other_key_down(is_escape and not composer.is_open_for_key_watcher))),
+        composer_key_name=COMPOSER_KEY,
+        on_composer_key=lambda is_down, at_seconds: deliver(recognize(
+            lambda: recognizer.composer_key_down(at_seconds) if is_down else recognizer.composer_key_up(at_seconds))),
+        on_ask_key=lambda is_down: deliver(recognize(lambda: recognizer.ask_key_down() if is_down else recognizer.ask_key_up())),
         # Clicks and keys, for a guided step waiting to be done (ignored unless one waits).
         on_step_input=lambda kind: None if kind == "escape" and composer.is_open_for_key_watcher else GLib.idle_add(
             lambda: (asking.step_input(kind), False)[1]),
@@ -239,8 +261,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, lambda: (Gtk.main_quit(), False)[1])
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, lambda: (Gtk.main_quit(), False)[1])
-    print(f"openclicky: hold {dictation_key} and speak, let go to type it (tap twice or esc cancels). "
-          f"tap left ctrl twice to ask about your screen. settings are in the tray icon. ctrl+c quits. log: {log_file or 'none (its folder could not be written)'}")
+    print(f"openclicky: hold {dictation_key} and speak, let go to type it (esc cancels). hold it with left alt to ask "
+          f"the pointer out loud; tap left ctrl twice to ask by typing. settings are in the tray icon. ctrl+c quits. log: {log_file or 'none (its folder could not be written)'}")
     try:
         Gtk.main()
     finally:

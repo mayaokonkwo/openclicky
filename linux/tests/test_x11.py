@@ -229,3 +229,15 @@ def test_settings_downloads_and_removes_the_offline_engine(private_display):
     assert "Dictation goes to nowhere yet" in outcome["routes_before"]
     assert "Dictation goes to this computer (offline)" in outcome["routes_after"]
     assert outcome["installed_after_remove"] is False
+
+
+def test_left_ctrl_dictates_asks_by_voice_and_opens_the_ask_box(private_display):
+    seen = run_scenario("left_ctrl", private_display)
+    assert seen["ctrl_c_listened"] is False  # ctrl+C never opens the microphone
+    assert seen["listening_while_held"] == "listening"
+    assert seen["text_box"] == "Buy more lemons"
+    assert seen["ask_box_opened"] is True
+    assert seen["asking_hint"] == "ask your question, then let go"
+    assert seen["questions"] == ["Where do i save this"]
+    assert seen["pointer_on_save"] is True
+    assert seen["text_box_after_question"] == "Buy more lemons"  # the question was not typed

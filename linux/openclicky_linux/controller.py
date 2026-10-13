@@ -15,10 +15,11 @@ from enum import Enum
 from typing import Any, Callable, Protocol
 
 from . import applog, formatter
-from .gestures import DictationDoubleTapped, DictationPressed, DictationReleased, EscapePressed, ShortcutEvent
+from .gestures import AskJoined, DictationDoubleTapped, DictationPressed, DictationReleased, EscapePressed, ShortcutEvent
 from .recorder import pcm_seconds, wav_from_pcm
 from .space import DictationSpace
 
+ASKING_HINT = "ask your question, then let go"
 # Shorter than this the take was a slip of the finger, not speech.
 MINIMUM_SPEECH_SECONDS = 0.3
 
@@ -56,6 +57,8 @@ class DictationHost:
     schedule: Callable[[float, Callable[[], None]], None]
     # A take started: the engine may get ready now (the offline one loads its model while the person speaks).
     prepare_transcription: Callable[[], None] = lambda: None
+    # A take held with left alt was a spoken question: it goes to the pointer (the ask lane).
+    ask_question: Callable[[str], None] = lambda _question: None
 
 
 class OrbModel:
@@ -78,6 +81,8 @@ class DictationTakeController:
         self.host = host
         self.orb = orb
         self.state = TakeState.IDLE
+        # This take's words are a question for the pointer (left alt was held), not text to type.
+        self.take_asks_the_pointer = False
         self._take_ids = itertools.count(1)
         self.take_id = 0
         self._take_is_toggle = False
@@ -93,7 +98,7 @@ class DictationTakeController:
     def handle(self, event: ShortcutEvent) -> None:
         if isinstance(event, DictationPressed):
             if self.state is TakeState.IDLE:
-                self._begin_take()
+                self._begin_take(asks_the_pointer=event.ask)
             elif self.state is TakeState.LISTENING and self._take_is_toggle:
                 # A second press while a tapped take listens: this press ends it.
                 self._stop_take()
@@ -108,6 +113,11 @@ class DictationTakeController:
                 self.orb.show("listening", "say it, then tap the key again")
             else:
                 self._stop_take()
+        elif isinstance(event, AskJoined):
+            # Left alt joined a take that listens: its words become a question for the pointer.
+            if self.state is TakeState.LISTENING and not self.take_asks_the_pointer:
+                self.take_asks_the_pointer = True
+                self.orb.show("listening", ASKING_HINT)
         elif isinstance(event, DictationDoubleTapped):
             if self.is_take_in_progress:
                 self.cancel_take("cancelled")
@@ -115,7 +125,8 @@ class DictationTakeController:
             if self.is_take_in_progress:
                 self.cancel_take("cancelled")
 
-    def _begin_take(self) -> None:
+    def _begin_take(self, asks_the_pointer: bool = False) -> None:
+        self.take_asks_the_pointer = asks_the_pointer
         self.take_id = next(self._take_ids)
         self._take_is_toggle = False
         self._window_at_press = self.host.focused_window()
@@ -128,7 +139,7 @@ class DictationTakeController:
         self.state = TakeState.LISTENING
         self.host.prepare_transcription()
         applog.append(f"take {self.take_id} started in {self._window_at_press.app_class if self._window_at_press else 'an unknown window'}")
-        self.orb.show("listening", "release to transcribe")
+        self.orb.show("listening", ASKING_HINT if asks_the_pointer else "release to transcribe")
 
     def _stop_take(self) -> None:
         if self.state is not TakeState.LISTENING or self._recording is None:
@@ -165,6 +176,14 @@ class DictationTakeController:
             self._fail(str(outcome) or "couldn't transcribe that", this_take_id)
             return
         text = formatter.format_locally(outcome or "", self.host.load_space())
+        if text and self.take_asks_the_pointer:
+            # A spoken question: the pointer answers it (and guides, step by step); nothing is typed.
+            self.finished_takes.append((text, "asked the pointer"))
+            applog.append(f"take {this_take_id} done: a {len(text)}-character question for the pointer")
+            self._end_take()
+            self.orb.show("idle")
+            self.host.ask_question(text)
+            return
         if not text:
             self._fail("didn't catch that", this_take_id)
             return
