@@ -89,7 +89,7 @@ def test_left_ctrl_twice_asks_and_the_pointer_flies_to_the_answer(private_displa
     assert outcome["composer_closed"]
     assert outcome["thinking"].startswith("t")  # typing out "thinking…"
     # The question went with a real screenshot of the whole screen (the private display is 1280x800).
-    assert outcome["asked"] == [["where do i save this?", 1280, 800, True]]
+    assert outcome["asked"] == [["where do i save this?", 1, 1280, 800, True]]
     assert outcome["pointed_at"] == outcome["save_center"]
     assert outcome["caption"] == "that save button down on the right keeps your note."
     assert outcome["after_escape"] == ["following", False]

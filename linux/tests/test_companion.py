@@ -41,7 +41,6 @@ class FakeDesktop:
             show_composer=lambda: setattr(self, "composer_open", True),
             hide_composer=lambda: setattr(self, "composer_open", False),
             capture_screen=lambda: self.screenshot,
-            screen_size=lambda: (1568, 980),
             ask=self.ask,
             run_in_background=lambda work, done: self.background.append((work, done)),
             schedule=lambda seconds, action: self.timers.append(action),

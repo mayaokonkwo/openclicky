@@ -252,10 +252,12 @@ class PointerView:
 
     def _place_caption(self) -> None:
         caption_width, _caption_height = self.caption.get_size()
-        screen_width = Gdk.get_default_root_window().get_width()
         pointer_x, pointer_y = self.position
-        # To the right of the pointer, or to its left when it would run off the screen.
-        if pointer_x + POINTER_WIDTH + 6 + caption_width <= screen_width - 12:
+        # The edge that matters is the pointer's own monitor's, not the far side of the desktop.
+        monitor = Gdk.Display.get_default().get_monitor_at_point(round(pointer_x), round(pointer_y)).get_geometry()
+        monitor_right_edge = monitor.x + monitor.width
+        # To the right of the pointer, or to its left when it would run off the monitor.
+        if pointer_x + POINTER_WIDTH + 6 + caption_width <= monitor_right_edge - 12:
             caption_x = pointer_x + POINTER_WIDTH + 6
         else:
             caption_x = pointer_x - 6 - caption_width

@@ -201,7 +201,10 @@ def scenario_ask_and_point() -> dict:
     asked = []
 
     def stand_in_model(question, screenshot_taken, conversation):
-        asked.append([question, screenshot_taken.width, screenshot_taken.height, len(screenshot_taken.png_bytes) > 1000])
+        # One picture per monitor; the private display has one.
+        from openclicky_linux.ask import as_screen_list
+        pictures = as_screen_list(screenshot_taken)
+        asked.append([question, len(pictures), pictures[0].width, pictures[0].height, len(pictures[0].png_bytes) > 1000])
         time.sleep(0.4)
         return f"[POINT:{save_center[0]},{save_center[1]}:save button] that save button down on the right keeps your note."
 

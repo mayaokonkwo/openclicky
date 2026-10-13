@@ -7,7 +7,7 @@ An early Linux client for OpenClicky. It runs against the same backend contract 
 What it does today: **ask about your screen by text** (the pointer answers and points), **step by
 step guidance**, **the pointer** itself (including shake to appear), **dictation** (untested with a
 real microphone so far), **Settings** and a **tray icon**. Not yet: spoken answers, asking by voice,
-more than one monitor, Wayland.
+Wayland.
 
 ## Ask about your screen
 
@@ -16,7 +16,9 @@ Tap **left ctrl twice**. A one-line box opens at the top of the screen:
 ![The ask box over a notes app, with "where do i save this?" typed in](media/linux/ask-box.png)
 
 Press **Enter**. The box closes, a screenshot of your screen goes with the question, and the orange
-pointer beside your mouse says "thinking…". When the answer is about something on screen, the
+pointer beside your mouse says "thinking…". With more than one monitor, each one goes as its own
+picture, the one with your mouse first, and the pointer can fly to another monitor when that is
+where the answer is. When the answer is about something on screen, the
 pointer flies to it and types the answer beside itself:
 
 ![The pointer on the notes app's Save button, with a caption saying the save button will do it](media/linux/ask-answer.png)
@@ -127,8 +129,8 @@ have one; GNOME needs an extension); without one, the shortcuts still work and S
 
 ## Privacy
 
-- A question sends a screenshot of **your whole screen** to whoever answers it: keep anything
-  private out of sight before you ask.
+- A question sends a screenshot of **every monitor** to whoever answers it (on an OpenClicky
+  account, the two nearest your mouse): keep anything private out of sight before you ask.
 - Dictation sends only the audio recorded while you hold the key.
 - Nothing is recorded or sent otherwise: the watcher only notices key presses and clicks (it acts on
   clicks only while a guide waits for a step), and the pointer only reads where your mouse is.

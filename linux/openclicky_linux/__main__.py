@@ -75,7 +75,7 @@ def wire_up(dictation_key: str, start_recording: Callable[[], Any], transcribe: 
     from .companion import AskController, AskHost
     from .desktop import ClipboardPaster, OrbWindow
     from .pointer_view import PointerView
-    from .screen import capture_screen, screen_size
+    from .screen import capture_screens
     from .windows import ComposerWindow, SettingsWindow, TrayIcon, pointer_icon
     from .x11 import DictationKeyListener, focused_window
 
@@ -120,8 +120,7 @@ def wire_up(dictation_key: str, start_recording: Callable[[], Any], transcribe: 
     asking = AskController(AskHost(
         show_composer=composer.show,
         hide_composer=composer.hide,
-        capture_screen=capture_screen,
-        screen_size=screen_size,
+        capture_screen=capture_screens,
         # Settings are read for every question: a key saved in Settings works at once.
         ask=ask or (lambda question, screenshot, conversation: ask_model(question, screenshot, conversation, load_settings())),
         run_in_background=run_in_background,

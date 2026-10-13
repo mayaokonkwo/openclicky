@@ -51,7 +51,7 @@ you have a small orange triangle pointer that can fly to and point at things on 
 
 when you point, START your response with a coordinate tag. the screenshot is labeled with its pixel size; use it as the coordinate space, origin (0,0) at the top-left, x rightward, y downward.
 
-format: [POINT:x,y:label] where x,y are integer pixel coordinates in the screenshot and label is a short 1-3 word description of the element (like "search bar" or "save button").
+format: [POINT:x,y:label] where x,y are integer pixel coordinates in the screenshot and label is a short 1-3 word description of the element (like "search bar" or "save button"). if you receive more than one screen image, the one labeled "primary focus" is where the mouse is: prioritize it. if the element is on a DIFFERENT screen, append :screenN where N is the screen number from the image label, like [POINT:400,300:terminal:screen2]; without it the pointer goes to the wrong place.
 
 if pointing wouldn't help, start with [POINT:none].
 
@@ -69,11 +69,39 @@ class AskError(Exception):
 
 @dataclass(frozen=True)
 class Screenshot:
+    """One monitor's picture. A question carries one per monitor, the one with the mouse first."""
     png_bytes: bytes
     width: int
     height: int
     # Screenshot pixels per screen pixel (below 1 when the capture was downscaled).
     scale: float
+    # Where this monitor's top-left corner is on the X screen (0, 0 for the first or only one).
+    origin_x: int = 0
+    origin_y: int = 0
+
+
+# An account's answers take at most two pictures (the Mac's `AccountCapabilities.maxAskScreens`); own keys up to four.
+MAXIMUM_SCREENS_ON_AN_ACCOUNT = 2
+MAXIMUM_SCREENS = 4
+
+
+def as_screen_list(screens: "Screenshot | list[Screenshot]") -> list[Screenshot]:
+    return [screens] if isinstance(screens, Screenshot) else list(screens)
+
+
+def _labelled_screens(screens: list[Screenshot], question: str, image_block) -> list[dict]:
+    """Each picture followed by its label ("screen 1 (primary focus, 1280x800 pixels)"), the question
+    last; with one screen, its label and the question share one block."""
+    content: list[dict] = []
+    for index, screen in enumerate(screens):
+        focus = "primary focus, " if index == 0 else ""
+        label = f"screen {index + 1} ({focus}{screen.width}x{screen.height} pixels)"
+        content.append(image_block(screen))
+        if index == len(screens) - 1:
+            content.append({"type": "text", "text": f"{label}\n\n{question}"})
+        else:
+            content.append({"type": "text", "text": label})
+    return content
 
 
 @dataclass(frozen=True)
@@ -97,48 +125,45 @@ def _with_language(settings: LinuxSettings) -> str:
     return SYSTEM_PROMPT
 
 
-def _anthropic_body(question: str, screenshot: Screenshot, conversation: Conversation, settings: LinuxSettings) -> dict:
+def _anthropic_body(question: str, screens: list[Screenshot], conversation: Conversation, settings: LinuxSettings) -> dict:
     messages = []
     for earlier_question, earlier_answer in conversation.exchanges:
         messages += [{"role": "user", "content": earlier_question}, {"role": "assistant", "content": earlier_answer}]
-    messages.append({"role": "user", "content": [
-        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(screenshot.png_bytes).decode("ascii")}},
-        {"type": "text", "text": f"screen 1 (primary focus, {screenshot.width}x{screenshot.height} pixels)\n\n{question}"},
-    ]})
+    messages.append({"role": "user", "content": _labelled_screens(screens, question, lambda screen: {
+        "type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(screen.png_bytes).decode("ascii")}})})
     return {"model": ANTHROPIC_MODEL, "max_tokens": MAX_ANSWER_TOKENS, "system": _with_language(settings), "messages": messages}
 
 
-def _openai_body(question: str, screenshot: Screenshot, conversation: Conversation, settings: LinuxSettings,
+def _openai_body(question: str, screens: list[Screenshot], conversation: Conversation, settings: LinuxSettings,
                  model: str = OPENAI_MODEL) -> dict:
     messages: list[dict] = [{"role": "system", "content": _with_language(settings)}]
     for earlier_question, earlier_answer in conversation.exchanges:
         messages += [{"role": "user", "content": earlier_question}, {"role": "assistant", "content": earlier_answer}]
-    image_url = "data:image/png;base64," + base64.b64encode(screenshot.png_bytes).decode("ascii")
-    messages.append({"role": "user", "content": [
-        {"type": "image_url", "image_url": {"url": image_url}},
-        {"type": "text", "text": f"screen 1 (primary focus, {screenshot.width}x{screenshot.height} pixels)\n\n{question}"},
-    ]})
+    messages.append({"role": "user", "content": _labelled_screens(screens, question, lambda screen: {
+        "type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(screen.png_bytes).decode("ascii")}})})
     return {"model": model, "max_tokens": MAX_ANSWER_TOKENS, "messages": messages}
 
 
-def request_for(question: str, screenshot: Screenshot, conversation: Conversation, settings: LinuxSettings) -> AskRequest:
+def request_for(question: str, screenshot: "Screenshot | list[Screenshot]", conversation: Conversation, settings: LinuxSettings) -> AskRequest:
+    """`screenshot` is one picture or one per monitor, the one with the mouse first."""
+    screens = as_screen_list(screenshot)[:MAXIMUM_SCREENS]
     if settings.anthropic_api_key:
-        body = json.dumps(_anthropic_body(question, screenshot, conversation, settings)).encode()
+        body = json.dumps(_anthropic_body(question, screens, conversation, settings)).encode()
         return AskRequest("anthropic", urllib.request.Request(ANTHROPIC_MESSAGES_URL, data=body, method="POST", headers={
             "x-api-key": settings.anthropic_api_key, "anthropic-version": ANTHROPIC_VERSION, "Content-Type": "application/json"}))
     if settings.openrouter_api_key:
         model = settings.openrouter_model or OPENROUTER_MODEL
-        body = json.dumps(_openai_body(question, screenshot, conversation, settings, model=model)).encode()
+        body = json.dumps(_openai_body(question, screens, conversation, settings, model=model)).encode()
         return AskRequest("openrouter", urllib.request.Request(OPENROUTER_CHAT_URL, data=body, method="POST", headers={
             "Authorization": f"Bearer {settings.openrouter_api_key}", "Content-Type": "application/json",
             # OpenRouter's app attribution headers: shown on its dashboard, never needed to answer.
             "HTTP-Referer": "https://openclicky.flowsxr.com", "X-Title": "OpenClicky for Linux"}))
     if settings.openai_api_key:
-        body = json.dumps(_openai_body(question, screenshot, conversation, settings)).encode()
+        body = json.dumps(_openai_body(question, screens, conversation, settings)).encode()
         return AskRequest("openai", urllib.request.Request(OPENAI_CHAT_URL, data=body, method="POST", headers={
             "Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}))
     if settings.account_token:
-        body = json.dumps(_anthropic_body(question, screenshot, conversation, settings)).encode()
+        body = json.dumps(_anthropic_body(question, screens[:MAXIMUM_SCREENS_ON_AN_ACCOUNT], conversation, settings)).encode()
         return AskRequest("backend", urllib.request.Request(f"{settings.backend_url}/chat", data=body, method="POST", headers={
             "Authorization": f"Bearer {settings.account_token}", "anthropic-version": ANTHROPIC_VERSION, "Content-Type": "application/json"}))
     raise AskError("asking needs an anthropic, openrouter or openai key, or an openclicky account. add one in settings.")
@@ -153,7 +178,7 @@ def answer_text(kind: str, response: dict) -> str:
     return "".join(block.get("text", "") for block in blocks if isinstance(block, dict) and block.get("type") == "text").strip()
 
 
-def ask(question: str, screenshot: Screenshot, conversation: Conversation, settings: LinuxSettings) -> str:
+def ask(question: str, screenshot: "Screenshot | list[Screenshot]", conversation: Conversation, settings: LinuxSettings) -> str:
     routed = request_for(question, screenshot, conversation, settings)
     vendor = {"anthropic": "anthropic", "openrouter": "openrouter", "openai": "openai", "backend": "the openclicky backend"}[routed.kind]
     try:

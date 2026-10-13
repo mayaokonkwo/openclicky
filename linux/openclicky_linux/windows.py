@@ -68,8 +68,11 @@ class ComposerWindow:
 
     def show(self) -> None:
         self.entry.set_text("")
-        screen_width = Gdk.get_default_root_window().get_width()
-        self.window.move((screen_width - self.WIDTH) // 2, self.TOP_MARGIN)
+        # On the monitor the mouse is on, not centred across all of them (the seam between two).
+        display = Gdk.Display.get_default()
+        _screen, mouse_x, mouse_y = display.get_default_seat().get_pointer().get_position()[0:3]
+        monitor = display.get_monitor_at_point(mouse_x, mouse_y).get_geometry()
+        self.window.move(monitor.x + (monitor.width - self.WIDTH) // 2, monitor.y + self.TOP_MARGIN)
         present_with_focus(self.window)
         self.entry.grab_focus()
 

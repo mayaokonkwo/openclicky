@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 from . import guided
-from .ask import Conversation, Screenshot
-from .pointing import parse_pointing, screenshot_point_to_screen
+from .ask import Conversation, Screenshot, as_screen_list
+from .pointing import parse_pointing, point_on_screens
 
 THINKING_CAPTION = "thinking…"
 # The ask box is hidden before the screenshot is taken, or the model would see the question box.
@@ -38,10 +38,10 @@ class PointerSurface(Protocol):
 class AskHost:
     show_composer: Callable[[], None]
     hide_composer: Callable[[], None]
-    capture_screen: Callable[[], Screenshot]
-    screen_size: Callable[[], tuple[int, int]]
-    # (question, screenshot, conversation) → the model's answer; raises with a sentence to show.
-    ask: Callable[[str, Screenshot, Conversation], str]
+    # One picture per monitor, the one with the mouse first (or a single picture).
+    capture_screen: Callable[[], "Screenshot | list[Screenshot]"]
+    # (question, pictures, conversation) → the model's answer; raises with a sentence to show.
+    ask: Callable[[str, "Screenshot | list[Screenshot]", Conversation], str]
     run_in_background: Callable[[Callable[[], Any], Callable[[Any], None]], None]
     schedule: Callable[[float, Callable[[], None]], None]
 
@@ -119,8 +119,7 @@ class AskController:
         # Kept without the tag and the marker, as on the Mac: they would only confuse later answers.
         self.conversation.remember(question, result.text)
         if result.has_point:
-            screen_width, screen_height = self.host.screen_size()
-            screen_x, screen_y = screenshot_point_to_screen(result.x, result.y, screenshot.scale, screen_width, screen_height)
+            screen_x, screen_y = point_on_screens(result.x, result.y, result.screen_number, as_screen_list(screenshot))
             self.pointer.fly_to(screen_x, screen_y)
         else:
             # Still pointing at the last step's target would point at the wrong thing: back to the mouse.
