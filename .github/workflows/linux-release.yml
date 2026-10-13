@@ -1,0 +1,30 @@
+name: linux-release
+
+# Attaches the Linux client to each release as it is published, next to the dmg and zip that
+# macos/OpenClicky/scripts/release.sh uploads: the Mac release stays exactly as it is, and the
+# Linux package is built from the same tag on GitHub's own Ubuntu runner.
+on:
+  release:
+    types: [published]
+
+permissions: { contents: write }
+
+jobs:
+  attach-the-linux-package:
+    # Forks publish their own linux-v* pre-releases by hand; only the canonical repo runs this.
+    if: github.repository == 'prasanthsasikumar/openclicky'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - name: Build the wheel and the source package
+        working-directory: linux
+        run: |
+          python3 -m venv /tmp/build-tools && /tmp/build-tools/bin/pip install --quiet build
+          /tmp/build-tools/bin/python -m build
+          cd dist && sha256sum ./* > SHA256SUMS-linux.txt
+      - name: Attach them to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" linux/dist/* --repo "${{ github.repository }}" --clobber

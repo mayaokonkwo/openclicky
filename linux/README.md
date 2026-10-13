@@ -111,9 +111,14 @@ check (AT-SPI), offline engines (Parakeet runs on Linux through sherpa-onnx), Wa
 
 ## For reviewers
 
+**CI:** a `linux-client` job in `.github/workflows/test.yml` runs these tests on every pull request
+(Ubuntu 24.04, GTK from apt, Xvfb), and `.github/workflows/linux-release.yml` attaches the Linux
+package to each release when it is published, built from that release's tag, next to the dmg and zip
+that `release.sh` uploads; it runs only on `prasanthsasikumar/openclicky`, not on forks.
+
 **What changes outside `linux/`:** a new page, [`docs/linux.md`](../docs/linux.md), with its pictures
-in `docs/media/linux/` (about 120 KB); one row in `CONTRIBUTING.md`'s table; a few lines in
-`.gitignore` (the virtualenv and Python caches). Nothing in `macos/`, `backend/`, `agent/` or the
+in `docs/media/linux/` (about 150 KB); one row in `CONTRIBUTING.md`'s table; a few lines in
+`.gitignore` (the virtualenv and Python caches); the CI job and workflow above. Nothing in `macos/`, `backend/`, `agent/` or the
 main README changes, and no backend route is added: the client uses `/agent/transcribe` and `/chat`
 exactly as the Mac app sends them.
 
@@ -123,7 +128,7 @@ microphone, nothing on your screen):
 ```bash
 cd linux
 python3 -m venv --system-site-packages .venv && .venv/bin/pip install -e '.[test]'
-.venv/bin/python -m pytest             # 169 tests; the X11 ones start their own Xvfb (with .[offline] and the model downloaded, real speech too)
+.venv/bin/python -m pytest             # 170 tests; the X11 ones start their own Xvfb (with .[offline] and the model downloaded, real speech too)
 OPENCLICKY_SCREENSHOT_DIR=/tmp/shots .venv/bin/python -m pytest tests/test_x11.py   # and look at /tmp/shots
 scripts/make-doc-screenshots.sh        # remakes docs/media/linux/ (a scripted answer; --live uses your key)
 ```

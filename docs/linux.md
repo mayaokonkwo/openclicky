@@ -139,11 +139,11 @@ over it; on Wayland OpenClicky says so and stops.
 1. From your distribution: Python 3.10+, GTK 3 bindings and a recorder.
    - Debian, Ubuntu: `sudo apt install python3-venv python3-gi gir1.2-gtk-3.0 pulseaudio-utils`
    - Fedora: `sudo dnf install python3-gobject gtk3 pulseaudio-utils`
-2. Download `openclicky_linux-0.2.0-py3-none-any.whl` from the release, then:
+2. Download `openclicky_linux-0.3.0-py3-none-any.whl` from the release, then:
 
    ```bash
    python3 -m venv --system-site-packages ~/.local/openclicky
-   ~/.local/openclicky/bin/pip install openclicky_linux-0.2.0-py3-none-any.whl
+   ~/.local/openclicky/bin/pip install openclicky_linux-0.3.0-py3-none-any.whl
    ~/.local/openclicky/bin/pip install sherpa-onnx==1.13.8   # for offline dictation (about 30 MB)
    ~/.local/openclicky/bin/openclicky-linux settings   # add a key, then Save
    ~/.local/openclicky/bin/openclicky-linux --check    # what it found

@@ -223,6 +223,8 @@ def test_a_whole_take_with_the_real_offline_engine(private_display):
     assert outcome["preloaded"]
 
 
+@pytest.mark.skipif(not __import__("openclicky_linux.offline", fromlist=["is_engine_available"]).is_engine_available(),
+                    reason="needs sherpa-onnx (pip install -e '.[offline]'): without it the row says so instead")
 def test_settings_downloads_and_removes_the_offline_engine(private_display):
     # Its own data folder: the real model, if downloaded, is never touched.
     outcome = run_scenario("offline_settings", private_display,
