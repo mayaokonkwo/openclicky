@@ -1,3 +1,3 @@
 """OpenClicky for Linux: dictation first (hold a key, speak, the words land where your cursor is)."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

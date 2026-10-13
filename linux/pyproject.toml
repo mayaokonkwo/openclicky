@@ -1,6 +1,6 @@
 [project]
 name = "openclicky-linux"
-version = "0.1.0"
+version = "0.2.0"
 description = "OpenClicky for Linux (X11): dictation, the pointer, and asking about your screen."
 requires-python = ">=3.10"
 license = "MIT"
