@@ -714,10 +714,17 @@ def scenario_offline_settings() -> dict:
     states = [[settings.offline_status.get_text(), settings.offline_button.get_label()]]
     routes_before = settings.routes_label.get_text()
     settings.start_offline_download(asset)
-    pump(0.2)
-    states.append(["downloading" if settings.offline_status.get_text().startswith("Downloading") else settings.offline_status.get_text(),
-                   settings.offline_button.get_label()])
-    pump(20, until=lambda: settings.offline_button.get_label() == "Remove")
+    # Watched on every turn of the loop rather than sampled once: a busy CI runner can finish the
+    # stand-in download before a fixed pause ends, and the test only needs to see the progress once.
+    seen_downloading: list[list[str]] = []
+
+    def finished() -> bool:
+        if not seen_downloading and settings.offline_status.get_text().startswith("Downloading"):
+            seen_downloading.append(["downloading", settings.offline_button.get_label()])
+        return settings.offline_button.get_label() == "Remove"
+
+    pump(20, until=finished)
+    states.append(seen_downloading[0] if seen_downloading else [settings.offline_status.get_text(), settings.offline_button.get_label()])
     states.append([settings.offline_status.get_text().split(" (")[0], settings.offline_button.get_label()])
     routes_after = settings.routes_label.get_text()
     screenshot("offline-settings")

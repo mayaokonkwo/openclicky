@@ -113,8 +113,9 @@ check (AT-SPI), offline engines (Parakeet runs on Linux through sherpa-onnx), Wa
 
 **CI:** a `linux-client` job in `.github/workflows/test.yml` runs these tests on every pull request
 (Ubuntu 24.04, GTK from apt, Xvfb), and `.github/workflows/linux-release.yml` attaches the Linux
-package to each release when it is published, built from that release's tag, next to the dmg and zip
-that `release.sh` uploads; it runs only on `prasanthsasikumar/openclicky`, not on forks.
+package to a release when the maintainer runs it by hand (Actions → linux-release → Run workflow, with
+the release's tag), built from that tag, next to the dmg and zip that `release.sh` uploads. A Mac release
+never ships Linux on its own. It runs only on `prasanthsasikumar/openclicky`, not on forks.
 
 **What changes outside `linux/`:** a new page, [`docs/linux.md`](../docs/linux.md), with its pictures
 in `docs/media/linux/` (about 150 KB); one row in `CONTRIBUTING.md`'s table; a few lines in
