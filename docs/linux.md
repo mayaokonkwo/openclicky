@@ -35,7 +35,7 @@ step at a time: the pointer shows the first one and waits. Do it — a click, or
 typing — and a moment later, once the menu or dialog has opened, OpenClicky looks at your screen
 again and shows the next step, until the last one:
 
-![A Photos settings dialog opened by the first step, with the pointer on its Dark mode checkbox and the caption "check that dark mode checkbox."](media/linux/guided-step.png)
+![A Photos settings dialog opened by the first step, with the pointer on its Dark mode checkbox and a caption saying to tick it](media/linux/guided-step.png)
 
 *The second step of a real guide: the first ("open settings first.") pointed at the Settings button,
 whose click opened this dialog.* If you click something else, the next step helps you back. **Esc**,
