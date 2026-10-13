@@ -220,3 +220,18 @@ def test_a_linked_shell_json_stays_a_link(tmp_path):
     save_settings({"language_code": "en-IN"}, link)
     assert link.is_symlink()
     assert json.loads(real.read_text()) == {"token": "tok", "language": "en-IN"}
+
+
+def test_settings_say_which_keys_do_what_for_the_key_picked():
+    import gi
+    gi.require_version("Gtk", "3.0")
+    from openclicky_linux.windows import shortcut_rows
+    left = shortcut_rows("Control_L")
+    assert ("Hold", ("Left Ctrl",), "Dictate: speak, then let go. Your words are typed where the cursor is.") in left
+    assert ("Hold", ("Left Ctrl", "Left Alt"), "Ask out loud: the pointer answers, shows you where, and guides you step by step.") in left
+    assert ("Tap twice", ("Left Ctrl",), "Ask by typing.") in left
+    assert not any(how.startswith("Tap, then") for how, _keys, _what in left)  # left ctrl cannot be tapped to dictate
+    right_alt = shortcut_rows("Alt_R", "onShake")
+    assert right_alt[0][1] == ("Right Alt",) and right_alt[1][0] == "Tap, then tap again"
+    assert ("Hold", ("Right Alt", "Left Alt"), "Ask out loud: the pointer answers, shows you where, and guides you step by step.") in right_alt
+    assert ("Shake", ("the mouse",), "Bring the pointer back beside the mouse.") in right_alt

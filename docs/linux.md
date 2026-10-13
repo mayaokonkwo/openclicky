@@ -103,7 +103,8 @@ From the tray icon (**Settings…**), or `openclicky-linux settings`:
 
 ![The Settings window: dictation key, language, show the pointer, and the keys](media/linux/settings.png)
 
-*Shown with an example key, not a real one.* **Microphone** lists every input your sound system
+**Shortcuts**, at the top, lists every key combination and what it does, for the dictation key you
+picked. *Shown with an example key, not a real one.* **Microphone** lists every input your sound system
 knows (a headset plugged in since shows up next time Settings opens); **Test** records three
 seconds with a level meter and says whether it heard you, keeping nothing. Below the fields it says
 where dictation and answers will go, as you type. **Save** writes into `~/.openclicky/shell.json`, the file the Mac app and the

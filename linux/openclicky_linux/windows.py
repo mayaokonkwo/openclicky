@@ -33,6 +33,25 @@ from .x11 import polygon_rows  # noqa: E402
 DICTATION_KEY_CHOICES = (("Control_L", "left ctrl (where fn is on a Mac)"), ("Control_R", "right ctrl"), ("Alt_R", "right alt"),
                          ("Super_R", "right super"), ("Menu", "menu key"))
 POINTER_CHOICES = tuple(PRESENCE_LABELS.items())
+KEY_NAMES = {"Control_L": "Left Ctrl", "Control_R": "Right Ctrl", "Alt_L": "Left Alt", "Alt_R": "Right Alt",
+             "Super_R": "Right Super", "Menu": "Menu"}
+
+
+def shortcut_rows(dictation_key: str, pointer_presence: str = "always") -> list[tuple[str, tuple[str, ...], str]]:
+    """What each key combination does, as Settings shows it: (how, keys, what it does). Follows the
+    dictation key picked (left ctrl, shared with the ask box, cannot also be tapped to dictate)."""
+    key = KEY_NAMES.get(dictation_key, dictation_key)
+    rows = [("Hold", (key,), "Dictate: speak, then let go. Your words are typed where the cursor is.")]
+    if dictation_key != "Control_L":
+        rows.append(("Tap, then tap again", (key,), "Dictate without holding the key."))
+    rows += [
+        ("Hold", (key, "Left Alt"), "Ask out loud: the pointer answers, shows you where, and guides you step by step."),
+        ("Tap twice", ("Left Ctrl",), "Ask by typing."),
+        ("Press", ("Esc",), "Stop: cancels dictation, stops a spoken answer, ends a guide."),
+    ]
+    if pointer_presence == "onShake":
+        rows.append(("Shake", ("the mouse",), "Bring the pointer back beside the mouse."))
+    return rows
 DICTATION_ENGINE_CHOICES = (("auto", "Automatic (offline when downloaded)"), ("offline", "Offline, on this computer"),
                             ("openai", "OpenAI (your key)"), ("account", "OpenClicky account"))
 MICROPHONE_DEFAULT_ID = "default"
@@ -122,10 +141,22 @@ class SettingsWindow:
         # A test still recording when the window closes stops: the microphone is never left open.
         self.window.connect("hide", lambda _window: self._stop_microphone_test())
         layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self.window.add(layout)
+        # Settings scrolls once it is taller than the screen; Close and Save stay in sight below it.
+        self.scroller = Gtk.ScrolledWindow()
+        self.scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.scroller.set_propagate_natural_height(True)
+        self.scroller.add(layout)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        outer.pack_start(self.scroller, True, True, 0)
+        self.window.add(outer)
         self.fields: dict[str, Gtk.Widget] = {}
         self._loaded_speaker: int | None = None
 
+        self._heading(layout, "Shortcuts")
+        # Filled from the dictation key and the pointer setting, and again whenever either changes.
+        self.shortcuts_grid = Gtk.Grid(column_spacing=14, row_spacing=6)
+        self.shortcuts_grid.set_margin_bottom(4)
+        layout.pack_start(self.shortcuts_grid, False, False, 0)
         self._heading(layout, "Dictation")
         self.fields["dictation_key"] = self._choice(layout, "Hold to dictate", DICTATION_KEY_CHOICES)
         self.fields["language_code"] = self._text(layout, "Language", "blank: the engine detects it (en, hi-IN, ta…)")
@@ -175,12 +206,44 @@ class SettingsWindow:
         self.save_button.connect("clicked", lambda _button: self.save())
         buttons.pack_start(close_button, False, False, 0)
         buttons.pack_start(self.save_button, False, False, 0)
-        layout.pack_start(buttons, False, False, 0)
+        outer.pack_start(buttons, False, False, 0)
         for widget in self.fields.values():
             if not isinstance(widget, Gtk.CheckButton):
                 widget.connect("changed", lambda _widget: self._update_routes())
+        self.fields["dictation_key"].connect("changed", lambda _widget: self._show_shortcuts())
+        self.fields["pointer_presence"].connect("changed", lambda _widget: self._show_shortcuts())
+        keycaps = Gtk.CssProvider()
+        keycaps.load_from_data(b".openclicky-keycap { border: 1px solid alpha(currentColor, 0.35); border-radius: 4px;"
+                               b" padding: 0 6px; font-weight: 600; }")
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), keycaps, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
     # MARK: building
+
+    def _show_shortcuts(self) -> None:
+        for child in self.shortcuts_grid.get_children():
+            self.shortcuts_grid.remove(child)
+        dictation_key = self.fields["dictation_key"].get_active_id() or "Control_L"
+        presence = self.fields["pointer_presence"].get_active_id() if "pointer_presence" in self.fields else "always"
+        self.shortcut_lines = []
+        for row_index, (how, keys, what) in enumerate(shortcut_rows(dictation_key, presence)):
+            combination = Gtk.Box(spacing=4)
+            # Keycaps keep their own height beside a description that wraps onto two lines.
+            combination.set_valign(Gtk.Align.START)
+            combination.pack_start(Gtk.Label(label=how, xalign=0), False, False, 0)
+            for key_index, key in enumerate(keys):
+                if key_index:
+                    combination.pack_start(Gtk.Label(label="+"), False, False, 0)
+                keycap = Gtk.Label(label=key)
+                keycap.get_style_context().add_class("openclicky-keycap")
+                combination.pack_start(keycap, False, False, 0)
+            description = Gtk.Label(label=what, xalign=0)
+            description.set_valign(Gtk.Align.START)
+            description.set_line_wrap(True)
+            description.set_max_width_chars(44)
+            self.shortcuts_grid.attach(combination, 0, row_index, 1, 1)
+            self.shortcuts_grid.attach(description, 1, row_index, 1, 1)
+            self.shortcut_lines.append(f"{how} {' + '.join(keys)}: {what}")
+        self.shortcuts_grid.show_all()
 
     def _heading(self, layout: Gtk.Box, title: str) -> None:
         label = Gtk.Label(xalign=0)
@@ -329,6 +392,7 @@ class SettingsWindow:
         self.start_at_login.set_active(autostart.is_enabled())
         self.offline_row.show_state()
         self.voice_row.show_state()
+        self._show_shortcuts()
         self.status_label.set_text(f"Set in the environment, which wins while it is set: {', '.join(overridden)}." if overridden else "")
         self._update_routes()
 
@@ -401,6 +465,11 @@ class SettingsWindow:
 
     def show(self) -> None:
         self.load()
+        # As tall as it needs, up to the screen less room for panels and the title bar.
+        display = Gdk.Display.get_default()
+        _screen, mouse_x, mouse_y = display.get_default_seat().get_pointer().get_position()[0:3]
+        monitor_height = display.get_monitor_at_point(mouse_x, mouse_y).get_workarea().height
+        self.scroller.set_max_content_height(max(300, monitor_height - 160))
         present_with_focus(self.window)
 
 

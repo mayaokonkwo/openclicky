@@ -248,6 +248,7 @@ def scenario_settings_window() -> dict:
     settings = app.settings_window
     settings.show()
     pump(0.5)
+    shortcuts_shown = list(settings.shortcut_lines)
     routes_before = settings.routes_label.get_text()
     settings.fields["anthropic_api_key"].set_text("sk-ant-test")
     settings.fields["language_code"].set_text("en-IN")
@@ -255,13 +256,15 @@ def scenario_settings_window() -> dict:
     settings.fields["pointer_presence"].set_active_id("whenAnswering")
     pump(0.2)
     routes_after = settings.routes_label.get_text()
+    shortcuts_after_picking_right_alt = list(settings.shortcut_lines)
     screenshot("settings")
     settings.save_button.clicked()
     pump(0.3)
     shell_json = os.path.join(os.environ["OPENCLICKY_HOME"], "shell.json")
     with open(shell_json, encoding="utf-8") as saved_file:
         saved = json.load(saved_file)
-    return {"routes_before": routes_before, "routes_after": routes_after, "saved": saved,
+    return {"shortcuts_shown": shortcuts_shown, "shortcuts_after_picking_right_alt": shortcuts_after_picking_right_alt,
+            "routes_before": routes_before, "routes_after": routes_after, "saved": saved,
             "mode": oct(os.stat(shell_json).st_mode & 0o777), "status": settings.status_label.get_text(),
             "pointer_presence_now": app.pointer.presence, "pointer_visible_while_following": app.pointer.triangle.get_visible()}
 

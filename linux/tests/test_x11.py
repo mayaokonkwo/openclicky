@@ -104,6 +104,11 @@ def test_left_ctrl_twice_asks_and_the_pointer_flies_to_the_answer(private_displa
 def test_settings_show_the_routes_and_save_into_shell_json(private_display, tmp_path):
     (tmp_path / "shell.json").write_text(json.dumps({"refreshToken": "keep-me"}))
     outcome = run_scenario("settings_window", private_display, openclicky_home=tmp_path)
+    assert "Hold Left Ctrl + Left Alt: Ask out loud: the pointer answers, shows you where, and guides you step by step." in outcome["shortcuts_shown"]
+    assert "Tap twice Left Ctrl: Ask by typing." in outcome["shortcuts_shown"]
+    # The list follows the key picked, at once (the scenario picks right alt, which can also be tapped).
+    assert outcome["shortcuts_after_picking_right_alt"][0].startswith("Hold Right Alt: Dictate")
+    assert "Tap, then tap again Right Alt: Dictate without holding the key." in outcome["shortcuts_after_picking_right_alt"]
     assert "Answers come from nothing yet" in outcome["routes_before"]
     assert "Answers come from your Anthropic key" in outcome["routes_after"]
     assert outcome["saved"] == {"refreshToken": "keep-me", "anthropicApiKey": "sk-ant-test", "language": "en-IN",
