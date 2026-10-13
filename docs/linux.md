@@ -93,7 +93,13 @@ seconds with a level meter and says whether it heard you, keeping nothing. Below
 where dictation and answers will go, as you type. **Save** writes into `~/.openclicky/shell.json`, the file the Mac app and the
 CLI read, and leaves everything else in it alone; the file stays readable by you only.
 
-| You add | Answers come from | Dictation goes to |
+**Offline dictation, no key needed:** Settings → Dictation → Offline engine → **Download** (about
+490 MB, once). It is Parakeet, the open speech model the Mac app uses offline, running on your own
+computer: your words never leave it. 25 European languages, English included, with punctuation.
+**Engine** chooses where dictation goes: Automatic (offline once it is downloaded, else a key or an
+account), or always offline, OpenAI or your account.
+
+| You add | Answers come from | Dictation goes to (when Engine is Automatic and offline is not downloaded) |
 |---|---|---|
 | an Anthropic key | Anthropic (Claude Sonnet 4.6) | — |
 | an OpenRouter key | OpenRouter (Claude Sonnet 4.6, or `answerModels.openrouter`) | — |
@@ -121,6 +127,7 @@ over it; on Wayland OpenClicky says so and stops.
    ```bash
    python3 -m venv --system-site-packages ~/.local/openclicky
    ~/.local/openclicky/bin/pip install openclicky_linux-0.2.0-py3-none-any.whl
+   ~/.local/openclicky/bin/pip install sherpa-onnx==1.13.8   # for offline dictation (about 30 MB)
    ~/.local/openclicky/bin/openclicky-linux settings   # add a key, then Save
    ~/.local/openclicky/bin/openclicky-linux --check    # what it found
    ~/.local/openclicky/bin/openclicky-linux
@@ -137,7 +144,8 @@ have one; GNOME needs an extension); without one, the shortcuts still work and S
 
 - A question sends a screenshot of **every monitor** to whoever answers it (on an OpenClicky
   account, the two nearest your mouse): keep anything private out of sight before you ask.
-- Dictation sends only the audio recorded while you hold the key.
+- Dictation with the offline engine sends nothing anywhere. With a key or an account, it sends only
+  the audio recorded while you hold the key.
 - Nothing is recorded or sent otherwise: the watcher only notices key presses and clicks (it acts on
   clicks only while a guide waits for a step), and the pointer only reads where your mouse is.
 - A guide sends a fresh screenshot after each step you do, until it ends.
@@ -152,6 +160,7 @@ have one; GNOME needs an extension); without one, the shortcuts still work and S
 | "needs an X11 session" | Log out and pick the Xorg / X11 session. |
 | "asking needs an anthropic, openrouter or openai key…" | Add a key in Settings. |
 | "no microphone recorder found" | Install `pulseaudio-utils` (or `alsa-utils`). |
+| "dictation needs an engine" | Settings → Dictation → Offline engine → Download, or add an OpenAI key or a token. |
 | "didn't catch that" every time | Settings → Microphone → **Test**. "Heard nothing at all": pick another microphone, or unmute it in your sound settings; in a virtual machine, the host must pass the microphone through. |
 | The pointer never shows | Settings → Show the pointer: "after a shake" and "only while answering" keep it hidden on purpose. |
 | Left ctrl twice does nothing | Tap, don't hold, and press nothing in between: ctrl+C never counts. |

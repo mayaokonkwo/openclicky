@@ -16,7 +16,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from . import applog
+from . import applog, offline
 from .ask import AskError, Conversation, Screenshot, ask as ask_model, request_for
 from .config import LinuxSettings, load_settings
 from .controller import DictationHost, DictationTakeController, OrbModel
@@ -36,9 +36,12 @@ def _describe_setup(dictation_key: str) -> int:
     except RecorderUnavailable as missing:
         print(f"recorder: missing ({missing})")
         problems += 1
+    print(f"offline engine: {'downloaded' if offline.is_installed() else 'not downloaded'}"
+          f"{'' if offline.is_engine_available() else ' (sherpa-onnx is not installed)'}")
     try:
-        route = route_for(b"", settings)
-        print(f"transcription: {'your openai key' if route.kind == 'openai' else 'openclicky account at ' + settings.backend_url}")
+        route = route_for(b"", settings, offline_installed=offline.is_ready())
+        print("transcription: " + {"offline": "offline, on this computer", "openai": "your openai key",
+                                   "backend": "openclicky account at " + settings.backend_url}[route.kind])
     except TranscriptionError as missing:
         print(f"transcription: missing ({missing})")
         problems += 1
@@ -67,6 +70,7 @@ class OpenClickyApp:
 
 
 def wire_up(dictation_key: str, start_recording: Callable[[], Any], transcribe: Callable[[bytes], str],
+            prepare_transcription: Callable[[], None] = lambda: None,
             ask: Callable[[str, Screenshot, Conversation], str] | None = None,
             display_name: str | None = None, with_tray: bool = False,
             on_quit: Callable[[], None] = lambda: None) -> OpenClickyApp:
@@ -115,6 +119,7 @@ def wire_up(dictation_key: str, start_recording: Callable[[], Any], transcribe: 
         load_space=load_space,
         run_in_background=run_in_background,
         schedule=schedule,
+        prepare_transcription=prepare_transcription,
     ), orb)
     dictation_holder["dictation"] = dictation
 
@@ -216,11 +221,14 @@ def main(argv: list[str] | None = None) -> int:
     from gi.repository import GLib, Gtk
 
     log_file = applog.start()
+    # One helper process for the offline engine, shared by every take (it unloads itself when idle).
+    offline_engine = offline.OfflineEngine()
     try:
         app = wire_up(dictation_key,
                   # The microphone is read for every take: one picked in Settings is used at once.
                   start_recording=lambda: MicrophoneRecording(microphone=load_settings().microphone),
-                      transcribe=lambda wav_bytes: transcribe(wav_bytes, load_settings()),
+                      transcribe=lambda wav_bytes: transcribe(wav_bytes, load_settings(), offline_engine),
+                  prepare_transcription=lambda: offline_engine.prepare() if load_settings().dictation_engine in ("auto", "offline") else None,
                       with_tray=True, on_quit=Gtk.main_quit)
         app.listener.start()
     except (ValueError, RuntimeError) as problem:
@@ -237,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
         Gtk.main()
     finally:
         app.listener.stop()
+        offline_engine.unload()
     return 0
 
 

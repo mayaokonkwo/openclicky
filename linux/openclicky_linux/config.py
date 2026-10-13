@@ -5,8 +5,8 @@ to their vendor; `answerModels.openrouter` picks the OpenRouter model, as on the
 `token` and `backendUrl` (an OpenClicky account, the fallback), `language` (dictation and answers;
 English when unset), and the Linux-only `linuxDictationKey` (an X keysym name, `Control_R` by
 default: Linux never sees fn), `linuxPointer` ("always", "whileMoving", "onShake", or
-"whenAnswering": see `presence.py`) and `linuxMicrophone` (a sound server source name; unset, the
-system default). `BACKEND_URL`, `OPENCLICKY_OPENAI_KEY` and `OPENCLICKY_ANTHROPIC_KEY` in the
+"whenAnswering": see `presence.py`), `linuxMicrophone` (a sound server source name; unset, the
+system default) and `linuxDictationEngine` ("auto", "offline", "openai" or "account"). `BACKEND_URL`, `OPENCLICKY_OPENAI_KEY` and `OPENCLICKY_ANTHROPIC_KEY` in the
 environment win over the file, as on the Mac.
 
 `save_settings` writes the Settings window's fields back and leaves every other key as it was: the
@@ -43,6 +43,8 @@ class LinuxSettings:
     pointer_presence: str = "always"
     # A PulseAudio/PipeWire source name; None: the system default.
     microphone: str | None = None
+    # "auto" | "offline" | "openai" | "account" (see transcriber.py).
+    dictation_engine: str = "auto"
 
     @property
     def bare_language_code(self) -> str | None:
@@ -80,6 +82,7 @@ def load_settings(shell_json_path: Path | None = None, environment: dict[str, st
         dictation_key=_cleaned(raw.get("linuxDictationKey")) or DEFAULT_DICTATION_KEY,
         pointer_presence=raw.get("linuxPointer") if raw.get("linuxPointer") in POINTER_PRESENCES else "always",
         microphone=_cleaned(raw.get("linuxMicrophone")),
+        dictation_engine=raw.get("linuxDictationEngine") if raw.get("linuxDictationEngine") in ("auto", "offline", "openai", "account") else "auto",
     )
 
 
@@ -109,6 +112,7 @@ SETTINGS_FIELDS = {
     "dictation_key": "linuxDictationKey",
     "pointer_presence": "linuxPointer",
     "microphone": "linuxMicrophone",
+    "dictation_engine": "linuxDictationEngine",
 }
 
 
@@ -131,7 +135,10 @@ def save_settings(changes: dict[str, str | None], shell_json_path: Path | None =
     for field_name, value in changes.items():
         json_key = SETTINGS_FIELDS[field_name]
         cleaned = _cleaned(value)
-        if cleaned is None or (field_name == "backend_url" and cleaned.rstrip("/") == HOSTED_BACKEND_URL):
+        # A default is no key at all: the file holds only what the person changed.
+        is_default = ((field_name == "backend_url" and cleaned is not None and cleaned.rstrip("/") == HOSTED_BACKEND_URL)
+                      or (field_name == "dictation_engine" and cleaned == "auto"))
+        if cleaned is None or is_default:
             current.pop(json_key, None)
         else:
             current[json_key] = cleaned

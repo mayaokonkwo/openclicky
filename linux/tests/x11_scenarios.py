@@ -604,5 +604,115 @@ def scenario_microphone_settings() -> dict:
     return {"menu": menu, "results": results, "started_with": started_with, "saved_microphone": saved.get("linuxMicrophone"),
             "recorder_stopped_on_close": running is not None and running._process.poll() is not None}
 
+
+def _resampled_to_16_khz(pcm: bytes, rate: int) -> bytes:
+    """Linear resampling, enough for a test: what a microphone at 16 kHz would have delivered."""
+    import array
+    source = array.array("h", pcm)
+    length = int(len(source) * 16000 / rate)
+    out = array.array("h", bytes(2 * length))
+    for index in range(length):
+        position = index * rate / 16000
+        left = int(position)
+        right = min(left + 1, len(source) - 1)
+        fraction = position - left
+        out[index] = int(source[left] * (1 - fraction) + source[right] * fraction)
+    return out.tobytes()
+
+
+def scenario_offline_dictation() -> dict:
+    """The whole take with the real offline engine: right ctrl held while a stand-in microphone plays
+    the model's English sample, released, and the words typed into a text box."""
+    import wave as wave_module
+
+    from openclicky_linux import offline
+    from openclicky_linux.config import load_settings
+    from openclicky_linux.transcriber import transcribe
+
+    with wave_module.open(str(offline.model_folder() / "test_wavs" / "en.wav")) as wav_file:
+        speech = _resampled_to_16_khz(wav_file.readframes(wav_file.getnframes()), wav_file.getframerate())
+
+    class SpeakingRecording:
+        def stop(self) -> bytes:
+            return speech
+
+        def cancel(self) -> None:
+            pass
+
+    engine = offline.OfflineEngine()
+    _window, entry = text_box_window()
+    app = wire_up("Control_R", start_recording=SpeakingRecording,
+                  transcribe=lambda wav_bytes: transcribe(wav_bytes, load_settings(), engine),
+                  prepare_transcription=engine.prepare)
+    orb_history: list = []
+    app.dictation.orb.listeners.append(lambda orb: orb_history.append([orb.phase, orb.message]))
+    app.listener.start()
+    pump(0.3)
+    key("Control_R", True)
+    pump(0.6)
+    preloaded = engine.is_running  # the model started loading as the key went down
+    key("Control_R", False)
+    started = time.monotonic()
+    pump(30, until=lambda: bool(entry.get_text()) or any(phase == "failed" for phase, _ in orb_history))
+    seconds = round(time.monotonic() - started, 1)
+    pump(0.8)
+    app.listener.stop()
+    engine.unload()
+    return {"text_box": entry.get_text(), "orb_history": orb_history, "preloaded": preloaded, "seconds_after_release": seconds}
+
+
+def scenario_offline_settings() -> dict:
+    """Settings → Dictation → Offline engine: Download (a small stand-in archive from a local
+    server, so nothing large is fetched), the progress, Downloaded, then Remove."""
+    import functools
+    import hashlib
+    import http.server
+    import io
+    import tarfile
+    import tempfile
+    import threading
+
+    from openclicky_linux import offline
+
+    served = tempfile.mkdtemp()
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:bz2") as archive:
+        for name in offline.PARAKEET.files:
+            data = b"stand-in " * 200_000  # a couple of MB, so the progress moves
+            info = tarfile.TarInfo(f"{offline.PARAKEET.folder_name}/{name}")
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+    archive_bytes = buffer.getvalue()
+    with open(os.path.join(served, "model.tar.bz2"), "wb") as archive_file:
+        archive_file.write(archive_bytes)
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=served)
+    handler.log_message = lambda *_arguments: None
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    asset = offline.ModelAsset(url=f"http://127.0.0.1:{server.server_address[1]}/model.tar.bz2",
+                               sha256=hashlib.sha256(archive_bytes).hexdigest(), size_bytes=len(archive_bytes),
+                               folder_name=offline.PARAKEET.folder_name, files=offline.PARAKEET.files)
+
+    app = wire_up("Control_R", start_recording=StandInRecording, transcribe=lambda _wav: "")
+    settings = app.settings_window
+    settings.show()
+    pump(0.5)
+    states = [[settings.offline_status.get_text(), settings.offline_button.get_label()]]
+    routes_before = settings.routes_label.get_text()
+    settings.start_offline_download(asset)
+    pump(0.05)
+    states.append(["downloading" if settings.offline_status.get_text().startswith("Downloading") else settings.offline_status.get_text(),
+                   settings.offline_button.get_label()])
+    pump(20, until=lambda: settings.offline_button.get_label() == "Remove")
+    states.append([settings.offline_status.get_text().split(" (")[0], settings.offline_button.get_label()])
+    routes_after = settings.routes_label.get_text()
+    screenshot("offline-settings")
+    settings.offline_button.clicked()  # Remove
+    pump(0.3)
+    states.append([settings.offline_status.get_text().split(".")[0], settings.offline_button.get_label()])
+    server.shutdown()
+    return {"states": states, "routes_before": routes_before, "routes_after": routes_after,
+            "installed_after_remove": offline.is_installed()}
+
 if __name__ == "__main__":
     print(json.dumps(globals()[f"scenario_{sys.argv[1]}"]()))

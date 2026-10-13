@@ -204,3 +204,28 @@ def test_settings_picks_and_tests_the_microphone(private_display, tmp_path):
     assert outcome["started_with"][:2] == ["alsa_input.usb-yeti", None]
     assert outcome["saved_microphone"] == "alsa_input.usb-yeti"
     assert outcome["recorder_stopped_on_close"]
+
+
+@pytest.mark.skipif(not __import__("openclicky_linux.offline", fromlist=["is_ready"]).is_ready(),
+                    reason="the offline model is not downloaded (Settings → Dictation → Download)")
+def test_a_whole_take_with_the_real_offline_engine(private_display):
+    outcome = run_scenario("offline_dictation", private_display)
+    # The words exactly; the punctuation the model picks varies with the audio ("you, ask" or "you. Ask").
+    words = "".join(character for character in outcome["text_box"].lower() if character.isalpha() or character == " ").split()
+    assert words == "ask not what your country can do for you ask what you can do for your country".split()
+    assert outcome["text_box"].startswith("Ask not")
+    assert ["done", "moved to text box"] in outcome["orb_history"]
+    assert outcome["preloaded"]
+
+
+def test_settings_downloads_and_removes_the_offline_engine(private_display):
+    # Its own data folder: the real model, if downloaded, is never touched.
+    outcome = run_scenario("offline_settings", private_display,
+                           extra_environment={"XDG_DATA_HOME": tempfile.mkdtemp(prefix="openclicky-test-data-")})
+    assert outcome["states"][0][0].startswith("Not downloaded") and outcome["states"][0][1] == "Download"
+    assert outcome["states"][1] == ["downloading", "Cancel"]
+    assert outcome["states"][2] == ["Downloaded", "Remove"]
+    assert outcome["states"][3] == ["Not downloaded", "Download"]
+    assert "Dictation goes to nowhere yet" in outcome["routes_before"]
+    assert "Dictation goes to this computer (offline)" in outcome["routes_after"]
+    assert outcome["installed_after_remove"] is False

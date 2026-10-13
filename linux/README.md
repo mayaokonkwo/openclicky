@@ -98,7 +98,8 @@ the Save and Delete buttons and stays put for "what is the capital of france?".
 | `x11.py` | The window in front (`_NET_ACTIVE_WINDOW`, `WM_CLASS`), the paste keystroke (XTEST), the listen-only key and click watcher (RECORD), window shapes (SHAPE). |
 | `desktop.py` | GTK 3: the clipboard paste and restore, the orb (a popup window that never takes the focus). |
 | `recorder.py` | 16 kHz mono PCM from `parecord` (the microphone picked in Settings) or `arecord`, wrapped as WAV; the microphones the sound server knows (`pactl`, monitors left out); loudness for the Test meter. |
-| `transcriber.py` | Own OpenAI key → OpenAI; else account → `POST /agent/transcribe`; else a sentence naming what is missing. |
+| `transcriber.py` | The dictation engine: Automatic = offline when downloaded, else own OpenAI key → OpenAI, else account → `POST /agent/transcribe`, else a sentence naming what to add; or one chosen in Settings. |
+| `offline.py`, `offline_helper.py` | Offline dictation: the Mac's Parakeet TDT 0.6B v3 int8 through sherpa-onnx 1.13.8 (same model, pinned SHA-256 and settings), downloaded on request, run in a helper process that starts with a take and ends after 180 s idle, as on the Mac. |
 | `formatter.py` | The Mac's `TakeFormatter.formatLocally`, ported: shortcuts, fillers, dictionary, sentence case. |
 | `config.py`, `space.py` | `~/.openclicky/shell.json` (read, and saved without touching other keys, mode 600, through a symlink, never over a file it cannot parse) and the dictionary/shortcut files. |
 | `applog.py` | `~/.local/state/openclicky/app.log`, as the Mac's `AppLog`: what happened and how long it took, never the words, questions, answers or keys. |
@@ -121,7 +122,7 @@ microphone, nothing on your screen):
 ```bash
 cd linux
 python3 -m venv --system-site-packages .venv && .venv/bin/pip install -e '.[test]'
-.venv/bin/python -m pytest             # 131 tests; the X11 ones start their own Xvfb
+.venv/bin/python -m pytest             # 144 tests; the X11 ones start their own Xvfb (with .[offline] and the model downloaded, real speech too)
 OPENCLICKY_SCREENSHOT_DIR=/tmp/shots .venv/bin/python -m pytest tests/test_x11.py   # and look at /tmp/shots
 scripts/make-doc-screenshots.sh        # remakes docs/media/linux/ (a scripted answer; --live uses your key)
 ```
@@ -143,6 +144,7 @@ together:
 | `ask.py` (prompt) | `CompanionManager.companionVoiceResponseSystemPrompt` | its rules and the pointing section, reworded for an answer that is read rather than heard |
 | `guided.py`, guide part of `companion.py` | `GuidedSteps.swift`, `CompanionManager.waitForTheGuidedStepToBeDone` (+ `GuidedStepsTests`, ported) | the [NEXT] marker, the prompt section, settle times (1.5 s after a click, 1.2 s after Return/Tab, 4 s while typing), 120 s idle, 15 steps, the "what's next?" that repeats the goal |
 | `pointing.py` | `CompanionManager.parsePointingCoordinates` | the tag grammar, leading/trailing tags, no recursion on two tags |
+| `offline.py`, `offline_helper.py` | `Parakeet/ParakeetDictation.swift`, `ParakeetEngine.swift`, `Sherpa/ModelDownload.swift` | the model, its URL and SHA-256, 80 mel features at 16 kHz, a NeMo transducer, at most four threads; a helper process that loads as a take starts and ends after 180 s idle |
 | `presence.py` | `PointerPresence.swift` (+ its tests, ported case for case) | the shake detector's numbers, the 3 s rest |
 | `config.py`, `space.py` | `OpenClickyConfiguration.swift`, `Dictation/DictationSpace.swift` | the same `shell.json` keys (`openaiApiKey`, `anthropicApiKey`, `openRouterApiKey`, `token`, `backendUrl`, `language`, `answerModels`) and dictionary files; Linux adds only `linuxDictationKey` and `linuxPointer` |
 

@@ -54,6 +54,8 @@ class DictationHost:
     run_in_background: Callable[[Callable[[], Any], Callable[[Any], None]], None]
     # Calls `action` on the main thread after `seconds`.
     schedule: Callable[[float, Callable[[], None]], None]
+    # A take started: the engine may get ready now (the offline one loads its model while the person speaks).
+    prepare_transcription: Callable[[], None] = lambda: None
 
 
 class OrbModel:
@@ -124,6 +126,7 @@ class DictationTakeController:
             self._fail(str(failure) or "couldn't open the microphone", self.take_id)
             return
         self.state = TakeState.LISTENING
+        self.host.prepare_transcription()
         applog.append(f"take {self.take_id} started in {self._window_at_press.app_class if self._window_at_press else 'an unknown window'}")
         self.orb.show("listening", "release to transcribe")
 

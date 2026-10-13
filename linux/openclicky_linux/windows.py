@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Callable
 
@@ -21,7 +22,7 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("GdkX11", "3.0")
 from gi.repository import Gdk, GdkPixbuf, GdkX11, GLib, Gtk  # noqa: E402
 
-from . import autostart  # noqa: E402
+from . import autostart, offline  # noqa: E402
 from .recorder import MicrophoneRecording, RecorderUnavailable, default_microphone_name, level_of, list_microphones  # noqa: E402
 from .config import HOSTED_BACKEND_URL, LinuxSettings, environment_overrides, load_settings, save_settings  # noqa: E402
 from .presence import PRESENCE_LABELS  # noqa: E402
@@ -30,6 +31,8 @@ from .x11 import polygon_rows  # noqa: E402
 
 DICTATION_KEY_CHOICES = (("Control_R", "right ctrl"), ("Alt_R", "right alt"), ("Super_R", "right super"), ("Menu", "menu key"))
 POINTER_CHOICES = tuple(PRESENCE_LABELS.items())
+DICTATION_ENGINE_CHOICES = (("auto", "Automatic (offline when downloaded)"), ("offline", "Offline, on this computer"),
+                            ("openai", "OpenAI (your key)"), ("account", "OpenClicky account"))
 MICROPHONE_DEFAULT_ID = "default"
 MICROPHONE_TEST_SECONDS = 3.0
 # Below this the test heard nothing: room noise on a working microphone is above it, a microphone
@@ -124,6 +127,8 @@ class SettingsWindow:
         self.fields["dictation_key"] = self._choice(layout, "Hold to dictate", DICTATION_KEY_CHOICES)
         self.fields["language_code"] = self._text(layout, "Language", "blank: the engine detects it (en, hi-IN, ta…)")
         self.fields["microphone"] = self._microphone_row(layout)
+        self.fields["dictation_engine"] = self._choice(layout, "Engine", DICTATION_ENGINE_CHOICES)
+        self._offline_engine_row(layout)
         self._heading(layout, "Pointer")
         self.fields["pointer_presence"] = self._choice(layout, "Show the pointer", POINTER_CHOICES)
         self._heading(layout, "Keys & account")
@@ -195,6 +200,86 @@ class SettingsWindow:
         layout.pack_start(meter, False, False, 0)
         self._microphone_test = None
         return combo
+
+    def _offline_engine_row(self, layout: Gtk.Box) -> None:
+        """The offline engine's state, with the one action that makes sense now: Download (with its
+        size), Cancel while downloading, or Remove once it is there."""
+        self.offline_status = Gtk.Label(xalign=0)
+        self.offline_status.set_line_wrap(True)
+        self.offline_button = Gtk.Button()
+        self.offline_button.connect("clicked", lambda _button: self._offline_button_clicked())
+        row = Gtk.Box(spacing=8)
+        row.pack_start(self.offline_status, True, True, 0)
+        row.pack_start(self.offline_button, False, False, 0)
+        self._row(layout, "Offline engine", row)
+        self.offline_progress = Gtk.ProgressBar()
+        self.offline_progress.set_margin_start(162)
+        self.offline_progress.set_no_show_all(True)
+        layout.pack_start(self.offline_progress, False, False, 0)
+        self._offline_download_cancelled: threading.Event | None = None
+
+    def _show_offline_state(self, message: str | None = None) -> None:
+        if self._offline_download_cancelled is not None:
+            return  # a download in progress shows its own progress
+        if not offline.is_engine_available():
+            self.offline_status.set_text(message or "Needs sherpa-onnx: pip install 'openclicky-linux[offline]'")
+            self.offline_button.set_label("Download")
+            self.offline_button.set_sensitive(False)
+        elif offline.is_installed():
+            self.offline_status.set_text(message or f"Downloaded ({offline.installed_size_bytes() // 1_000_000} MB). "
+                                         "Your words never leave this computer.")
+            self.offline_button.set_label("Remove")
+            self.offline_button.set_sensitive(True)
+        else:
+            self.offline_status.set_text(message or f"Not downloaded. Parakeet, about {offline.PARAKEET.size_bytes // 1_000_000} MB, "
+                                         "25 European languages, no key needed.")
+            self.offline_button.set_label("Download")
+            self.offline_button.set_sensitive(True)
+        self.offline_progress.hide()
+
+    def _offline_button_clicked(self) -> None:
+        if self._offline_download_cancelled is not None:
+            self._offline_download_cancelled.set()
+            return
+        if offline.is_installed():
+            offline.remove()
+            self._show_offline_state()
+            self._update_routes()
+            return
+        self.start_offline_download()
+
+    def start_offline_download(self, asset: "offline.ModelAsset | None" = None) -> None:
+        """Downloads in the background; progress and the outcome come back to the main loop."""
+        cancelled = threading.Event()
+        self._offline_download_cancelled = cancelled
+        self.offline_button.set_label("Cancel")
+        self.offline_progress.set_fraction(0)
+        self.offline_progress.show()
+        self.offline_status.set_text("Downloading…")
+
+        def progress(done: int, total: int) -> None:
+            GLib.idle_add(lambda: (self._show_offline_progress(done, total), False)[1])
+
+        def run() -> None:
+            try:
+                offline.download(asset or offline.PARAKEET, on_progress=progress, cancelled=cancelled)
+                outcome = None
+            except offline.OfflineEngineError as failure:
+                outcome = str(failure)
+            GLib.idle_add(lambda: (self._finish_offline_download(outcome), False)[1])
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _show_offline_progress(self, done: int, total: int) -> None:
+        if self._offline_download_cancelled is None:
+            return
+        self.offline_progress.set_fraction(min(1.0, done / total) if total else 0)
+        self.offline_status.set_text(f"Downloading… {done // 1_000_000} of {total // 1_000_000} MB")
+
+    def _finish_offline_download(self, problem: str | None) -> None:
+        self._offline_download_cancelled = None
+        self._show_offline_state(f"Not downloaded: {problem}." if problem else None)
+        self._update_routes()
 
     def _fill_microphones(self, chosen: str | None) -> None:
         """Asked of the sound server each time Settings opens, so a headset plugged in since shows up."""
@@ -299,6 +384,7 @@ class SettingsWindow:
             else:
                 widget.set_text(value or "")
         self.start_at_login.set_active(autostart.is_enabled())
+        self._show_offline_state()
         self.status_label.set_text(f"Set in the environment, which wins while it is set: {', '.join(overridden)}." if overridden else "")
         self._update_routes()
 
@@ -318,7 +404,16 @@ class SettingsWindow:
         def has(field_name: str) -> bool:
             return bool((values.get(field_name) or "").strip()) or bool(getattr(from_environment, field_name, None) and
                                                                       field_name.endswith("_api_key"))
-        dictation = "your OpenAI key" if has("openai_api_key") else "your OpenClicky account" if has("account_token") else "nothing yet: add an OpenAI key or a token"
+        engine = values.get("dictation_engine") or "auto"
+        offline_ready = offline.is_ready()
+        if engine == "offline" or (engine == "auto" and offline_ready):
+            dictation = "this computer (offline)" if offline_ready else "nowhere yet: download the offline engine"
+        elif engine == "openai" or (engine == "auto" and has("openai_api_key")):
+            dictation = "your OpenAI key" if has("openai_api_key") else "nowhere yet: add an OpenAI key"
+        elif engine == "account" or (engine == "auto" and has("account_token")):
+            dictation = "your OpenClicky account" if has("account_token") else "nowhere yet: add a token"
+        else:
+            dictation = "nowhere yet: download the offline engine, or add an OpenAI key or a token"
         answers = ("your Anthropic key" if has("anthropic_api_key") else "your OpenRouter key" if has("openrouter_api_key")
                    else "your OpenAI key" if has("openai_api_key")
                    else "your OpenClicky account" if has("account_token") else "nothing yet: add a key or a token")
