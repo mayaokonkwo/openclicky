@@ -85,3 +85,16 @@ def test_the_pointer_flies_to_the_monitor_the_answer_names():
     work, done = background.pop()
     done(work())
     assert flights == [(200, 100)]  # screen 2 is the left monitor, at half scale
+
+
+def test_pictures_are_the_size_the_model_really_looks_at():
+    import gi
+    gi.require_version("Gdk", "3.0")
+    from openclicky_linux.screen import picture_scale
+    # The Mac's 1280 on the longest side: 1680x1050 → 1280x800 (1.02 megapixels).
+    assert round(1680 * picture_scale(1680, 1050)) == 1280 and round(1050 * picture_scale(1680, 1050)) == 800
+    # Never over ~1.15 megapixels, which the model would shrink again (an ultra-wide 3440x1440).
+    scale = picture_scale(3440, 1440)
+    assert round(3440 * scale) * round(1440 * scale) <= 1_150_000 * 1.01
+    # Never enlarged.
+    assert picture_scale(1024, 768) == 1.0

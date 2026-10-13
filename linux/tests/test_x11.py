@@ -241,3 +241,35 @@ def test_left_ctrl_dictates_asks_by_voice_and_opens_the_ask_box(private_display)
     assert seen["questions"] == ["Where do i save this"]
     assert seen["pointer_on_save"] is True
     assert seen["text_box_after_question"] == "Buy more lemons"  # the question was not typed
+
+
+@pytest.fixture
+def display_with_a_window_manager():
+    """Xvfb at 1680x1050 with xfwm4, so windows have real title bars (minimize, maximize, close)."""
+    if not shutil.which("Xvfb") or not shutil.which("xfwm4"):
+        pytest.skip("needs Xvfb and xfwm4")
+    number = next(n for n in range(60, 80) if not Path(f"/tmp/.X11-unix/X{n}").exists() and not Path(f"/tmp/.X{n}-lock").exists())
+    server = subprocess.Popen(["Xvfb", f":{number}", "-screen", "0", "1680x1050x24", "-nolisten", "tcp"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 10
+    while not Path(f"/tmp/.X11-unix/X{number}").exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    window_manager = subprocess.Popen(["xfwm4", "--compositor=on"], env={**os.environ, "DISPLAY": f":{number}"},
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(1.5)
+    yield f":{number}"
+    window_manager.terminate()
+    server.terminate()
+    server.wait(timeout=5)
+
+
+@pytest.mark.skipif(os.environ.get("OPENCLICKY_LIVE") != "1", reason="live: spends the person's own key; set OPENCLICKY_LIVE=1")
+def test_live_the_pointer_lands_on_the_minimize_button(display_with_a_window_manager):
+    """One request. With 1568 px screenshots this landed ~150 px left of the button, above the window."""
+    outcome = run_scenario("live_minimize", display_with_a_window_manager, openclicky_home=Path.home() / ".openclicky")
+    x, y, width, _height = outcome["frame"]
+    pointer_x, pointer_y = outcome["pointer"]
+    assert outcome["mode"] == "pointing"
+    assert y <= pointer_y <= y + 32, outcome  # in the title bar
+    # xfwm4's minimize button: the third from the right end (shade, minimize, maximize, close).
+    assert x + width - 80 <= pointer_x <= x + width - 50, outcome

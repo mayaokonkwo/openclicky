@@ -788,5 +788,29 @@ def scenario_left_ctrl() -> dict:
     app.listener.stop()
     return seen
 
+
+def scenario_live_minimize() -> dict:
+    """On a display with a window manager: where the pointer lands for "how do i minimize this
+    window?" (the title bar's small minimize button, near its right end)."""
+    from openclicky_linux.ask import ask as ask_model
+    from openclicky_linux.config import load_settings
+
+    window = Gtk.Window(title="Notes — shopping list")
+    window.set_default_size(900, 560)
+    window.add(Gtk.TextView())
+    window.move(500, 200)
+    window.show_all()
+    pump(1.5)
+    frame = window.get_window().get_frame_extents()
+    app = wire_up("Control_L", start_recording=StandInRecording, transcribe=lambda _wav: "",
+                  ask=lambda question, pictures, conversation: ask_model(question, pictures, conversation, load_settings()))
+    pump(0.5)
+    app.asking.submit("how do i minimize this window?")
+    pump(60, until=lambda: len(app.asking.conversation.exchanges) >= 1 and app.pointer.mode != "flying")
+    pump(0.5)
+    screenshot("live-minimize")
+    return {"frame": [frame.x, frame.y, frame.width, frame.height], "pointer": [round(value) for value in app.pointer.position],
+            "mode": app.pointer.mode}
+
 if __name__ == "__main__":
     print(json.dumps(globals()[f"scenario_{sys.argv[1]}"]()))

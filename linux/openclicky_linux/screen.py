@@ -1,5 +1,5 @@
 """The screenshots a question carries: one per monitor, the one with the mouse first, each scaled
-down so its longest side is at most 1568 px (what the vision models read at full detail), as PNG.
+down to what the vision models actually look at (see `picture_scale`), as PNG.
 Each keeps its scale and its monitor's place on the X screen, so a point the model gives in a
 picture's pixels (and its :screenN) maps back to the desktop. One monitor gives one picture of the
 whole screen, as before; two side by side no longer make one wide picture whose text is too small
@@ -17,7 +17,18 @@ from gi.repository import Gdk, GdkPixbuf  # noqa: E402
 from .ask import MAXIMUM_SCREENS, Screenshot  # noqa: E402
 from .pointing import MonitorArea, monitors_mouse_first  # noqa: E402
 
-MAX_SCREENSHOT_SIDE = 1568
+# The Mac app's size (CompanionScreenCaptureUtility: 1280 on the longest side). A bigger picture is
+# not seen in more detail: Claude shrinks anything over about 1.15 megapixels itself and then
+# answers in the smaller picture's pixels, so every point came back pulled toward the top-left
+# (on a 1680x1050 screen sent at 1568 px, the minimize button was missed by ~150 px).
+MAX_SCREENSHOT_SIDE = 1280
+MAX_SCREENSHOT_PIXELS = 1_150_000
+
+
+def picture_scale(width: int, height: int) -> float:
+    """Picture pixels per screen pixel: at most 1280 on the longest side and 1.15 megapixels, never
+    enlarged."""
+    return min(1.0, MAX_SCREENSHOT_SIDE / max(width, height), (MAX_SCREENSHOT_PIXELS / (width * height)) ** 0.5)
 
 
 def screen_size() -> tuple[int, int]:
@@ -40,9 +51,8 @@ def _capture_area(root, area: MonitorArea) -> Screenshot:
         raise RuntimeError("the screen could not be read")
     # On a HiDPI screen (GDK_SCALE=2) the picture has twice the pixels of the area asked for, so the
     # downscale and the scale kept are measured from the picture itself, not assumed from the area.
-    longest_side = max(pixbuf.get_width(), pixbuf.get_height())
-    if longest_side > MAX_SCREENSHOT_SIDE:
-        shrink = MAX_SCREENSHOT_SIDE / longest_side
+    shrink = picture_scale(pixbuf.get_width(), pixbuf.get_height())
+    if shrink < 1.0:
         pixbuf = pixbuf.scale_simple(round(pixbuf.get_width() * shrink), round(pixbuf.get_height() * shrink), GdkPixbuf.InterpType.BILINEAR)
     # Picture pixels per screen pixel, the way a point the model gives is mapped back.
     scale = pixbuf.get_width() / area.width
