@@ -16,18 +16,30 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
+import time  # noqa: E402
+
+from . import applog  # noqa: E402
 from .controller import FocusedWindow, OrbModel  # noqa: E402
-from .x11 import send_paste_keystroke  # noqa: E402
+from .x11 import focused_window, send_paste_keystroke  # noqa: E402
 
 CLIPBOARD_RESTORE_DELAY_MILLISECONDS = 600
 
 
 class ClipboardPaster:
-    def __init__(self, xlib_display, before_keystroke=lambda: None) -> None:
+    # Reading the old clipboard normally takes milliseconds; one that takes longer than this (a hung
+    # clipboard owner, GTK waits up to 30 s) is not followed by a keystroke: by then the person may be
+    # typing somewhere else.
+    CLIPBOARD_READ_LIMIT_SECONDS = 2.0
+
+    def __init__(self, xlib_display, before_keystroke=lambda: None, on_paste_problem=lambda _message: None) -> None:
         self._xlib_display = xlib_display
         # Lets the key listener ignore our own keystroke (it would look like a key typed mid-take).
         self._before_keystroke = before_keystroke
+        # The take has ended by the time the keystroke goes out: a problem then is reported here, so
+        # the orb can say "copied, press ctrl+v" instead of the "moved to text box" it already said.
+        self._on_paste_problem = on_paste_problem
         self._clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        self._paste_generation = 0
 
     def copy_to_clipboard(self, text: str) -> None:
         self._clipboard.set_text(text, -1)
@@ -38,15 +50,38 @@ class ClipboardPaster:
         """Puts `text` on the clipboard, posts the paste keystroke, and puts the person's own clipboard
         text back afterwards. The old clipboard is read asynchronously (`request_text`), never with
         `wait_for_text`: that runs a nested main loop, in which a queued esc or a new key press would
-        be handled in the middle of a take's paste. False when no keystroke can be posted (no XTEST)."""
+        be handled in the middle of a take's paste. Before the keystroke, the window in front is
+        checked again; anything wrong leaves the words on the clipboard and reports it. False when
+        no keystroke can be posted at all (no XTEST)."""
         if not self._xlib_display.has_extension("XTEST"):
             return False
-        with_shift = bool(window and window.is_terminal)
+        self._paste_generation += 1
+        this_paste = self._paste_generation
+        asked_at = time.monotonic()
 
         def paste_after_reading_the_old_clipboard(_clipboard, previous_text) -> None:
+            if this_paste != self._paste_generation:
+                # A newer take's paste has started: its words own the clipboard now.
+                applog.append("paste: an older take's paste was overtaken; its words were not pasted")
+                return
             self.copy_to_clipboard(text)
+            if time.monotonic() - asked_at > self.CLIPBOARD_READ_LIMIT_SECONDS:
+                self._on_paste_problem("too slow to paste. copied, press ctrl+v")
+                return
+            window_now = focused_window(self._xlib_display)
+            if window is not None and (window_now is None or window_now.window_id != window.window_id):
+                self._on_paste_problem("the window changed. copied, press ctrl+v")
+                return
             self._before_keystroke()
-            send_paste_keystroke(self._xlib_display, with_shift=with_shift)
+            try:
+                sent = send_paste_keystroke(self._xlib_display, with_shift=bool(window and window.is_terminal))
+            except Exception as failure:  # noqa: BLE001 - an X error must not lose the words
+                applog.append(f"paste: the keystroke failed ({type(failure).__name__})")
+                sent = False
+            if not sent:
+                # The words stay on the clipboard (no restore over them) and the orb says so.
+                self._on_paste_problem("couldn't paste. copied, press ctrl+v")
+                return
 
             def restore_previous_clipboard() -> bool:
                 def restore_if_still_ours(_clipboard, current_text) -> None:

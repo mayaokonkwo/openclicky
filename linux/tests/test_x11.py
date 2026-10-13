@@ -177,3 +177,18 @@ def test_a_hidpi_screen_maps_points_back_correctly(private_display):
     assert outcome["picture"] == [1280, 800]
     assert outcome["scale"] == 2.0
     assert outcome["middle_of_the_picture_on_screen"] == [320, 200]
+
+
+def test_a_paste_that_cannot_finish_keeps_the_words_and_says_so(private_display):
+    outcome = run_scenario("paste_problems", private_display)
+    assert outcome["keystroke fails"] == {"problems": ["couldn't paste. copied, press ctrl+v"],
+                                          "clipboard": "dictated words (keystroke fails)"}
+    assert outcome["window changed"] == {"problems": ["the window changed. copied, press ctrl+v"],
+                                         "clipboard": "dictated words (window changed)"}
+
+
+def test_the_esc_that_closes_the_ask_box_does_not_also_end_a_guide(private_display):
+    outcome = run_scenario("escape_closing_the_ask_box_keeps_the_guide", private_display)
+    assert outcome["waiting_before"]
+    assert outcome["after_first_escape"] == {"ask_box_open": False, "guide_waiting": True}
+    assert outcome["guide_waiting_after_second_escape"] is False

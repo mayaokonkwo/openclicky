@@ -171,7 +171,8 @@ class DictationTakeController:
             self.host.copy_to_clipboard(text)
             message = "couldn't paste. copied, press ctrl+v"
             applog.append(f"take {this_take_id}: paste failed ({type(failure).__name__}); left on the clipboard")
-        # Cancelled (esc) or replaced while the words were delivered: that take owns the state now.
+        # Defensive: delivering must not run the main loop (the paste reads the clipboard
+        # asynchronously), but if it ever did, an esc or a new take handled meanwhile owns the state.
         if self.take_id != this_take_id or self.state is not TakeState.FINISHING:
             return
         self.finished_takes.append((text, message))
@@ -219,3 +220,10 @@ class DictationTakeController:
                 self.orb.show("idle")
 
         self.host.schedule(after_seconds, rest)
+
+    def report_late_paste_problem(self, message: str) -> None:
+        """The keystroke for a take that already ended could not be sent where it belonged (the paste
+        finishes after the take, see `ClipboardPaster`): the words are on the clipboard; say so."""
+        applog.append(f"take {self.take_id}: {message}")
+        if self.state is TakeState.IDLE:
+            self._show_then_rest("failed", message, after_seconds=4.0)

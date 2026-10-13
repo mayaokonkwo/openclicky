@@ -42,3 +42,28 @@ def test_autostart_starts_this_copy(tmp_path, monkeypatch):
     command = autostart.launch_command()
     assert "openclicky-linux" in command or "-m openclicky_linux" in command
     assert sys.executable.rsplit("/", 1)[0] in command or "-m openclicky_linux" in command
+
+
+def test_a_log_folder_that_cannot_be_made_means_no_log_not_no_app(tmp_path, monkeypatch):
+    monkeypatch.setattr(applog, "_path", None)
+    blocker = tmp_path / "a file, not a folder"
+    blocker.write_text("")
+    monkeypatch.setenv("XDG_STATE_HOME", str(blocker))
+    assert applog.start() is None
+    applog.append("ignored")  # and logging later still never raises
+
+
+def test_an_entry_switched_off_by_the_desktop_counts_as_off(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    autostart.set_enabled(True)
+    path = autostart.autostart_path()
+    path.write_text(path.read_text() + "Hidden=true\n")
+    assert not autostart.is_enabled()
+    path.write_text(autostart.desktop_entry("openclicky-linux").replace("enabled=true", "enabled=false"))
+    assert not autostart.is_enabled()
+
+
+def test_the_exec_line_is_quoted_the_desktop_entry_way():
+    assert autostart._quoted("/home/maya/.local/openclicky/bin/openclicky-linux") == "/home/maya/.local/openclicky/bin/openclicky-linux"
+    assert autostart._quoted("/home/maya/My Apps/openclicky") == '"/home/maya/My Apps/openclicky"'
+    assert autostart._quoted('/odd/"$name"') == '"/odd/\\"\\$name\\""'

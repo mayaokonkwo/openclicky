@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Callable
 
 import gi
@@ -45,7 +44,10 @@ class ComposerWindow:
     TOP_MARGIN = 120
 
     def __init__(self, on_submit: Callable[[str], None]) -> None:
-        self.closed_by_escape_at = 0.0
+        # Read by the key watcher's thread when esc arrives (often before GTK has handled that esc
+        # itself), so an esc that closes this box is not also taken for "dismiss the answer" or
+        # "end the guide". A plain bool, set only on the main thread.
+        self.is_open_for_key_watcher = False
         self.window = Gtk.Window(title="Ask OpenClicky")
         self.window.set_decorated(False)
         self.window.set_keep_above(True)
@@ -65,17 +67,12 @@ class ComposerWindow:
 
     def _on_key(self, _window, event) -> bool:
         if event.keyval == Gdk.KEY_Escape:
-            # The key watcher sees this esc too; it must only close the box, not also dismiss the
-            # answer on screen or end a guide under way.
-            self.closed_by_escape_at = time.monotonic()
             self.hide()
             return True
         return False
 
-    def esc_just_closed_it(self) -> bool:
-        return time.monotonic() - self.closed_by_escape_at < 0.5
-
     def show(self) -> None:
+        self.is_open_for_key_watcher = True
         self.entry.set_text("")
         # On the monitor the mouse is on, not centred across all of them (the seam between two).
         display = Gdk.Display.get_default()
@@ -86,6 +83,7 @@ class ComposerWindow:
         self.entry.grab_focus()
 
     def hide(self) -> None:
+        self.is_open_for_key_watcher = False
         self.window.hide()
 
     @property
@@ -200,8 +198,12 @@ class SettingsWindow:
 
     def _update_routes(self) -> None:
         values = self.values()
+        # A key set in the environment counts too: it is what the app uses while it is set.
+        from_environment = load_settings()
+
         def has(field_name: str) -> bool:
-            return bool((values.get(field_name) or "").strip())
+            return bool((values.get(field_name) or "").strip()) or bool(getattr(from_environment, field_name, None) and
+                                                                      field_name.endswith("_api_key"))
         dictation = "your OpenAI key" if has("openai_api_key") else "your OpenClicky account" if has("account_token") else "nothing yet: add an OpenAI key or a token"
         answers = ("your Anthropic key" if has("anthropic_api_key") else "your OpenRouter key" if has("openrouter_api_key")
                    else "your OpenAI key" if has("openai_api_key")
@@ -211,16 +213,20 @@ class SettingsWindow:
     def save(self) -> None:
         try:
             save_settings(self.values())
-        except (OSError, ValueError) as failure:
+        except (OSError, ValueError, RuntimeError) as failure:  # RuntimeError: a symlink loop
             self.status_label.set_text(f"Not saved: {failure}")
             return
         try:
-            autostart.set_enabled(self.start_at_login.get_active())
+            # Only when the box changed: an entry the person edited (arguments, a delay) is kept.
+            if self.start_at_login.get_active() != autostart.is_enabled():
+                autostart.set_enabled(self.start_at_login.get_active())
         except OSError as failure:
             self.status_label.set_text(f"Saved, but starting at login could not be changed: {failure}")
             self.on_saved(load_settings())
             return
-        self.status_label.set_text("Saved. A new dictation key takes effect when OpenClicky restarts.")
+        overridden = environment_overrides()
+        self.status_label.set_text("Saved. A new dictation key takes effect when OpenClicky restarts."
+                                   + (f"\nSet in the environment, which wins while it is set: {', '.join(overridden)}." if overridden else ""))
         self.on_saved(load_settings())
 
     def show(self) -> None:

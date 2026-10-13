@@ -21,18 +21,20 @@ def log_path() -> Path:
     return state_home / "openclicky" / "app.log"
 
 
-def start() -> Path:
-    """Called once at launch: makes the folder, trims an oversized log, and remembers where it is."""
+def start() -> Path | None:
+    """Called once at launch: makes the folder, trims an oversized log, and remembers where it is.
+    A log that cannot be written (a read-only home, XDG_STATE_HOME pointing at a file) means no
+    log, never an app that does not start: None then."""
     global _path
     path = log_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        if path.stat().st_size > MAXIMUM_BYTES:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.stat().st_size > MAXIMUM_BYTES:
             kept = path.read_bytes()[-MAXIMUM_BYTES // 2:]
             # From the first whole line, so the log never starts mid-line.
             path.write_bytes(kept[kept.find(b"\n") + 1:])
-    except FileNotFoundError:
-        pass
+    except OSError:
+        return None
     _path = path
     append("openclicky started")
     return path

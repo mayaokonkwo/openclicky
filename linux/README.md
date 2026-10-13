@@ -121,7 +121,7 @@ microphone, nothing on your screen):
 ```bash
 cd linux
 python3 -m venv --system-site-packages .venv && .venv/bin/pip install -e '.[test]'
-.venv/bin/python -m pytest             # 120 tests; the X11 ones start their own Xvfb
+.venv/bin/python -m pytest             # 125 tests; the X11 ones start their own Xvfb
 OPENCLICKY_SCREENSHOT_DIR=/tmp/shots .venv/bin/python -m pytest tests/test_x11.py   # and look at /tmp/shots
 scripts/make-doc-screenshots.sh        # remakes docs/media/linux/ (a scripted answer; --live uses your key)
 ```
@@ -162,14 +162,17 @@ for the pointer), `desktop.py`, `pointer_view.py`, `windows.py`, `screen.py`, `r
 - *The key watcher listens, it never grabs* (RECORD, like the Mac's listen-only event tap): right
   ctrl keeps working in every other app.
 
-**Already reviewed once.** An independent pass over the whole client found, and this branch fixes
+**Reviewed twice.** An independent pass over the whole client found, and this branch fixes
 with a test each: an answer that was only a point tag leaving an empty turn that made Anthropic
 refuse every later question; right ctrl + click (or left ctrl + click twice) counting as a tap, so a
 take started and kept the microphone open; Settings copying environment keys into `shell.json`;
 dictation pasting when the window at press or release could not be told; a nested GTK loop during
 the paste letting an esc in mid-take; the pointer and caption showing in the screenshot they should
 not cover; HiDPI screenshots mapping points 2x off; and the key watcher, a failed paste or a bad
-dictation key failing silently or with a traceback.
+dictation key failing silently or with a traceback. A second pass over those fixes found that the
+now-asynchronous paste had to check the window and the keystroke itself (else a failure said
+"moved" and the restore then dropped the words), that the esc check had to read the ask box's state
+on the key watcher's thread, and that the log must never stop the app from starting; also fixed.
 
 **Not yet verified:** dictation with a real microphone (the machine it was built on had none passing
 audio); more than one real monitor (its logic is tested on fake layouts in `tests/test_monitors.py`,

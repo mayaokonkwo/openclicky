@@ -503,5 +503,51 @@ def scenario_hidpi_screenshot() -> dict:
     return {"screen": list(screen_size()), "picture": [pictures[0].width, pictures[0].height], "scale": pictures[0].scale,
             "middle_of_the_picture_on_screen": list(point_on_screens(pictures[0].width / 2, pictures[0].height / 2, None, pictures))}
 
+
+def scenario_paste_problems() -> dict:
+    """The paste's checks right before the keystroke: a keystroke that cannot be sent, and a window
+    that changed since the take ended. Either way the words must stay on the clipboard (no restore
+    over them) and the problem must be reported."""
+    from openclicky_linux import desktop
+    from openclicky_linux.controller import FocusedWindow
+
+    clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+    outcomes = {}
+    for case in ("keystroke fails", "window changed"):
+        clipboard.set_text("the person's own clipboard", -1)
+        pump(0.2)
+        problems = []
+        paster = desktop.ClipboardPaster(keyboard, on_paste_problem=problems.append)
+        if case == "keystroke fails":
+            desktop.send_paste_keystroke = lambda *_arguments, **_keywords: False
+            desktop.focused_window = lambda _display: FocusedWindow(window_id=7)
+        else:
+            desktop.send_paste_keystroke = lambda *_arguments, **_keywords: True
+            desktop.focused_window = lambda _display: FocusedWindow(window_id=8)  # not the take's window
+        paster.paste(f"dictated words ({case})", FocusedWindow(window_id=7))
+        pump(1.2)  # past the 0.6 s restore
+        outcomes[case] = {"problems": problems, "clipboard": clipboard.wait_for_text()}
+    return outcomes
+
+
+def scenario_escape_closing_the_ask_box_keeps_the_guide() -> dict:
+    app = wire_up("Control_R", start_recording=StandInRecording, transcribe=lambda _wav: "",
+                  ask=lambda question, pictures, conversation: "[POINT:200,200:menu] open the menu first. [NEXT]")
+    app.listener.start()
+    pump(0.3)
+    app.asking.submit("how do i do it?")
+    pump(5, until=lambda: app.asking.is_waiting_for_step)
+    waiting_before = app.asking.is_waiting_for_step
+    app.asking.open_composer()
+    pump(2, until=lambda: app.composer.is_open and app.composer.entry.has_focus())
+    tap("Escape")  # closes the ask box, nothing else
+    pump(0.8)
+    after_first_escape = {"ask_box_open": app.composer.is_open, "guide_waiting": app.asking.is_waiting_for_step}
+    tap("Escape")  # now it is for the guide
+    pump(0.8)
+    app.listener.stop()
+    return {"waiting_before": waiting_before, "after_first_escape": after_first_escape,
+            "guide_waiting_after_second_escape": app.asking.is_waiting_for_step}
+
 if __name__ == "__main__":
     print(json.dumps(globals()[f"scenario_{sys.argv[1]}"]()))

@@ -6,7 +6,6 @@ switches it on and off; nothing else writes there.
 from __future__ import annotations
 
 import os
-import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -19,16 +18,24 @@ def autostart_path() -> Path:
     return config_home / "autostart" / DESKTOP_FILE_NAME
 
 
+def _quoted(argument: str) -> str:
+    """An Exec argument quoted the desktop-entry way: double quotes, with " ` $ and \\ escaped."""
+    if argument and all(character.isalnum() or character in "/._-+" for character in argument):
+        return argument
+    escaped = "".join("\\" + character if character in '"`$\\' else character for character in argument)
+    return f'"{escaped}"'
+
+
 def launch_command() -> str:
     """How this copy of OpenClicky starts: its own `openclicky-linux` beside the Python running it
     (a virtualenv's bin), else the one on PATH, else this Python with `-m`."""
     beside_python = Path(sys.executable).with_name("openclicky-linux")
     if beside_python.exists():
-        return shlex.quote(str(beside_python))
+        return _quoted(str(beside_python))
     on_path = shutil.which("openclicky-linux")
     if on_path:
-        return shlex.quote(on_path)
-    return f"{shlex.quote(sys.executable)} -m openclicky_linux"
+        return _quoted(on_path)
+    return f"{_quoted(sys.executable)} -m openclicky_linux"
 
 
 def desktop_entry(command: str) -> str:
@@ -45,7 +52,12 @@ def desktop_entry(command: str) -> str:
 
 
 def is_enabled() -> bool:
-    return autostart_path().exists()
+    """The entry exists and is not switched off in it (`Hidden=true`, or GNOME's own switch)."""
+    try:
+        lines = [line.strip().lower() for line in autostart_path().read_text(encoding="utf-8").splitlines()]
+    except OSError:
+        return False
+    return "hidden=true" not in lines and "x-gnome-autostart-enabled=false" not in lines
 
 
 def set_enabled(enabled: bool) -> None:
