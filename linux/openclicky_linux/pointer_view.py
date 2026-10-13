@@ -53,8 +53,9 @@ POINTER_OUTLINE = [(0.0, 0.0), (POINTER_WIDTH, POINTER_HEIGHT * 0.64), (POINTER_
 def _make_click_through(window: Gtk.Window, outline_rows=None) -> None:
     # GTK creates the window on its own connection to the X server: it must have reached the server
     # before another connection can shape it (otherwise BadWindow, and the pointer stays a square).
-    Gdk.Display.get_default().sync()
-    shape_window(window.get_window().get_xid(), outline_rows=outline_rows, click_through=True)
+    display = Gdk.Display.get_default()
+    display.sync()
+    shape_window(window.get_window().get_xid(), outline_rows=outline_rows, click_through=True, display_name=display.get_name())
 
 
 class PointerView:
@@ -127,7 +128,19 @@ class PointerView:
     def presence(self) -> str:
         return self.tracker.presence
 
+    def hide_for_screenshot(self) -> None:
+        """Out of sight while a question's screenshot is taken; `show_after_screenshot` brings it back."""
+        self._hidden_for_screenshot = True
+        self.dismiss_caption()
+        self.triangle.hide()
+
+    def show_after_screenshot(self) -> None:
+        self._hidden_for_screenshot = False
+        self._apply_presence()
+
     def _apply_presence(self) -> None:
+        if getattr(self, "_hidden_for_screenshot", False):
+            return
         visible = self.tracker.is_awake or self.mode != "following" or self.caption.get_visible()
         if visible and not self.triangle.get_visible():
             # Placed where it belongs before it shows, so it never appears where it was last hidden.

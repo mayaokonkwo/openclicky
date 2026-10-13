@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Protocol
 
-from . import formatter
+from . import applog, formatter
 from .gestures import DictationDoubleTapped, DictationPressed, DictationReleased, EscapePressed, ShortcutEvent
 from .recorder import pcm_seconds, wav_from_pcm
 from .space import DictationSpace
@@ -124,6 +124,7 @@ class DictationTakeController:
             self._fail(str(failure) or "couldn't open the microphone", self.take_id)
             return
         self.state = TakeState.LISTENING
+        applog.append(f"take {self.take_id} started in {self._window_at_press.app_class if self._window_at_press else 'an unknown window'}")
         self.orb.show("listening", "release to transcribe")
 
     def _stop_take(self) -> None:
@@ -164,19 +165,32 @@ class DictationTakeController:
         if not text:
             self._fail("didn't catch that", this_take_id)
             return
-        message = self._deliver(text)
+        try:
+            message = self._deliver(text)
+        except Exception as failure:  # noqa: BLE001 - an X error mid-paste must not leave the take stuck
+            self.host.copy_to_clipboard(text)
+            message = "couldn't paste. copied, press ctrl+v"
+            applog.append(f"take {this_take_id}: paste failed ({type(failure).__name__}); left on the clipboard")
+        # Cancelled (esc) or replaced while the words were delivered: that take owns the state now.
+        if self.take_id != this_take_id or self.state is not TakeState.FINISHING:
+            return
         self.finished_takes.append((text, message))
+        applog.append(f"take {this_take_id} done: {len(text)} chars, {message}")
         self._end_take()
         self._show_then_rest("done", message, after_seconds=1.8)
 
     def _deliver(self, text: str) -> str:
-        """Pasted into the window that was in front at press, and only there."""
+        """Pasted into the window that was in front at press, and only there: when either window
+        cannot be told (no window manager answer, an X error), the words go to the clipboard."""
         window_now = self.host.focused_window()
         window_at_press = self._window_at_press
-        if window_at_press is not None and window_now is not None and window_now.window_id != window_at_press.window_id:
+        if window_at_press is None or window_now is None:
+            self.host.copy_to_clipboard(text)
+            return "couldn't tell which window. copied, press ctrl+v"
+        if window_now.window_id != window_at_press.window_id:
             self.host.copy_to_clipboard(text)
             return "the window changed. copied, press ctrl+v"
-        if self.host.paste(text, window_now or window_at_press):
+        if self.host.paste(text, window_now):
             return "moved to text box"
         self.host.copy_to_clipboard(text)
         return "copied, press ctrl+v"
@@ -188,6 +202,7 @@ class DictationTakeController:
             self._recording.cancel()
             self._recording = None
         self.finished_takes.append(("", message))
+        applog.append(f"take {failed_take_id} failed: {message}")
         self._end_take()
         self._show_then_rest("failed", message, after_seconds=2.5)
 

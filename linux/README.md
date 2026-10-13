@@ -100,7 +100,9 @@ the Save and Delete buttons and stays put for "what is the capital of france?".
 | `recorder.py` | 16 kHz mono PCM from `parecord` or `arecord`, wrapped as WAV. |
 | `transcriber.py` | Own OpenAI key → OpenAI; else account → `POST /agent/transcribe`; else a sentence naming what is missing. |
 | `formatter.py` | The Mac's `TakeFormatter.formatLocally`, ported: shortcuts, fillers, dictionary, sentence case. |
-| `config.py`, `space.py` | `~/.openclicky/shell.json` (read, and saved without touching other keys, mode 600) and the dictionary/shortcut files. |
+| `config.py`, `space.py` | `~/.openclicky/shell.json` (read, and saved without touching other keys, mode 600, through a symlink, never over a file it cannot parse) and the dictionary/shortcut files. |
+| `applog.py` | `~/.local/state/openclicky/app.log`, as the Mac's `AppLog`: what happened and how long it took, never the words, questions, answers or keys. |
+| `autostart.py` | Settings → Start OpenClicky when I log in: the freedesktop autostart entry. |
 
 Not yet: spoken answers and asking by voice, spoken numbers as digits, the model clean-up, history, the "is there a text box?"
 check (AT-SPI), offline engines (Parakeet runs on Linux through sherpa-onnx), Wayland.
@@ -119,7 +121,7 @@ microphone, nothing on your screen):
 ```bash
 cd linux
 python3 -m venv --system-site-packages .venv && .venv/bin/pip install -e '.[test]'
-.venv/bin/python -m pytest             # 106 tests; the X11 ones start their own Xvfb
+.venv/bin/python -m pytest             # 120 tests; the X11 ones start their own Xvfb
 OPENCLICKY_SCREENSHOT_DIR=/tmp/shots .venv/bin/python -m pytest tests/test_x11.py   # and look at /tmp/shots
 scripts/make-doc-screenshots.sh        # remakes docs/media/linux/ (a scripted answer; --live uses your key)
 ```
@@ -159,6 +161,15 @@ for the pointer), `desktop.py`, `pointer_view.py`, `windows.py`, `screen.py`, `r
   other key, writes atomically with mode 600, and refuses to overwrite a file it cannot parse.
 - *The key watcher listens, it never grabs* (RECORD, like the Mac's listen-only event tap): right
   ctrl keeps working in every other app.
+
+**Already reviewed once.** An independent pass over the whole client found, and this branch fixes
+with a test each: an answer that was only a point tag leaving an empty turn that made Anthropic
+refuse every later question; right ctrl + click (or left ctrl + click twice) counting as a tap, so a
+take started and kept the microphone open; Settings copying environment keys into `shell.json`;
+dictation pasting when the window at press or release could not be told; a nested GTK loop during
+the paste letting an esc in mid-take; the pointer and caption showing in the screenshot they should
+not cover; HiDPI screenshots mapping points 2x off; and the key watcher, a failed paste or a bad
+dictation key failing silently or with a traceback.
 
 **Not yet verified:** dictation with a real microphone (the machine it was built on had none passing
 audio); more than one real monitor (its logic is tested on fake layouts in `tests/test_monitors.py`,

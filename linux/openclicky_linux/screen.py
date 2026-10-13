@@ -38,9 +38,14 @@ def _capture_area(root, area: MonitorArea) -> Screenshot:
     pixbuf = Gdk.pixbuf_get_from_window(root, area.x, area.y, area.width, area.height)
     if pixbuf is None:
         raise RuntimeError("the screen could not be read")
-    scale = min(1.0, MAX_SCREENSHOT_SIDE / max(area.width, area.height))
-    if scale < 1.0:
-        pixbuf = pixbuf.scale_simple(round(area.width * scale), round(area.height * scale), GdkPixbuf.InterpType.BILINEAR)
+    # On a HiDPI screen (GDK_SCALE=2) the picture has twice the pixels of the area asked for, so the
+    # downscale and the scale kept are measured from the picture itself, not assumed from the area.
+    longest_side = max(pixbuf.get_width(), pixbuf.get_height())
+    if longest_side > MAX_SCREENSHOT_SIDE:
+        shrink = MAX_SCREENSHOT_SIDE / longest_side
+        pixbuf = pixbuf.scale_simple(round(pixbuf.get_width() * shrink), round(pixbuf.get_height() * shrink), GdkPixbuf.InterpType.BILINEAR)
+    # Picture pixels per screen pixel, the way a point the model gives is mapped back.
+    scale = pixbuf.get_width() / area.width
     succeeded, png_bytes = pixbuf.save_to_bufferv("png", [], [])
     if not succeeded:
         raise RuntimeError("the screenshot could not be encoded")

@@ -26,6 +26,7 @@ from Xlib.error import XError
 from Xlib.ext import record, shape, xtest
 from Xlib.protocol import rq
 
+from . import applog
 from .controller import FocusedWindow
 
 # WM_CLASS values (lowercased) of terminals, where paste is ctrl+shift+v (ctrl+v is a literal ^V).
@@ -116,15 +117,17 @@ def polygon_rows(points: list[tuple[float, float]], width: int, height: int) -> 
     return rows
 
 
-_shaping_display: xdisplay.Display | None = None
+_shaping_displays: dict[str | None, xdisplay.Display] = {}
 
 
-def shape_window(window_id: int, outline_rows: list[tuple[int, int, int, int]] | None = None, click_through: bool = True) -> bool:
+def shape_window(window_id: int, outline_rows: list[tuple[int, int, int, int]] | None = None, click_through: bool = True,
+                 display_name: str | None = None) -> bool:
     """Cuts the window to `outline_rows` (when given) and gives it an empty input shape (clicks go
-    to whatever is under it). False when the X server has no SHAPE extension."""
-    global _shaping_display
-    if _shaping_display is None:
-        _shaping_display = xdisplay.Display()
+    to whatever is under it), on `display_name` (the one GTK is using). False when the X server has
+    no SHAPE extension."""
+    if display_name not in _shaping_displays:
+        _shaping_displays[display_name] = xdisplay.Display(display_name)
+    _shaping_display = _shaping_displays[display_name]
     if not _shaping_display.has_extension("SHAPE"):
         return False
     window = _shaping_display.create_resource_object("window", window_id)
@@ -200,6 +203,14 @@ class DictationKeyListener:
         self._context = None
 
     def _handle_reply(self, reply) -> None:
+        # Runs on the RECORD thread: an exception here would end the thread, and every shortcut
+        # would stop working with nothing said. Logged and survived instead.
+        try:
+            self._handle_events(reply)
+        except Exception as failure:  # noqa: BLE001
+            applog.append(f"key watcher: skipped an event ({type(failure).__name__}: {failure})")
+
+    def _handle_events(self, reply) -> None:
         if reply.category != record.FromServer or reply.client_swapped or not reply.data:
             return
         data = reply.data
@@ -207,8 +218,15 @@ class DictationKeyListener:
             event, data = rq.EventField(None).parse_binary_value(data, self._record_display.display, None, None)
             if time.monotonic() < self._ignore_until:
                 continue
+            if event.type == X.ButtonPress:
+                # A click while right ctrl (or left ctrl) is down makes it ctrl+click, not a tap:
+                # without this, right ctrl + click (a link in a new tab) started a take that kept the
+                # microphone open. The wheel (4–7) scrolls and is not a click.
+                if event.detail not in (4, 5, 6, 7):
+                    self._on_other_key_down(False)
+                continue
             if event.type == X.ButtonRelease:
-                # The left button only (1); the wheel (4–7) and the other buttons are not a step.
+                # The left button only (1); the wheel and the other buttons are not a step.
                 if event.detail == 1:
                     self._on_step_input("click")
                 continue

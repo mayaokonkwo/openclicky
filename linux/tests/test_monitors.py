@@ -67,6 +67,8 @@ def test_the_pointer_flies_to_the_monitor_the_answer_names():
     flights = []
 
     class Pointer:
+        def hide_for_screenshot(self): pass
+        def show_after_screenshot(self): pass
         def show_caption(self, text, hold_seconds): pass
         def dismiss_caption(self): pass
         def fly_to(self, screen_x, screen_y): flights.append((screen_x, screen_y))

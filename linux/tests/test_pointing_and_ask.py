@@ -195,3 +195,28 @@ def test_the_pointer_outline_as_pixel_rows():
     assert all(0 <= x and x + width <= POINTER_WIDTH and 0 <= y < POINTER_HEIGHT for x, y, width, _height in rows)
     # A square is every pixel of every row.
     assert polygon_rows([(0, 0), (4, 0), (4, 3), (0, 3)], 4, 3) == [(0, 0, 4, 1), (0, 1, 4, 1), (0, 2, 4, 1)]
+
+
+def test_settings_name_the_fields_the_environment_overrides_never_their_values():
+    from openclicky_linux.config import environment_overrides
+    assert environment_overrides({"OPENCLICKY_OPENROUTER_KEY": "sk-or-secret", "BACKEND_URL": " "}) == ["OpenRouter key"]
+    assert environment_overrides({}) == []
+
+
+def test_a_shell_json_that_is_not_an_object_is_never_overwritten(tmp_path):
+    shell_json = tmp_path / "shell.json"
+    shell_json.write_text("[1, 2]")
+    with pytest.raises(ValueError, match="not a json object"):
+        save_settings({"openai_api_key": "sk"}, shell_json)
+    assert shell_json.read_text() == "[1, 2]"
+
+
+def test_a_linked_shell_json_stays_a_link(tmp_path):
+    real = tmp_path / "dotfiles" / "shell.json"
+    real.parent.mkdir()
+    real.write_text(json.dumps({"token": "tok"}))
+    link = tmp_path / "shell.json"
+    link.symlink_to(real)
+    save_settings({"language_code": "en-IN"}, link)
+    assert link.is_symlink()
+    assert json.loads(real.read_text()) == {"token": "tok", "language": "en-IN"}

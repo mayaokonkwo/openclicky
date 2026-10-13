@@ -223,7 +223,9 @@ def scenario_ask_and_point() -> dict:
     screenshot("ask-box")
     typed = app.composer.entry.get_text()
     tap("Return")
-    pump(0.2)
+    pump(0.06)
+    hidden_for_the_screenshot = not app.pointer.triangle.get_visible()
+    pump(2, until=lambda: app.pointer.caption_label.get_text() != "")
     thinking = app.pointer.caption_label.get_text()
     pump(6, until=lambda: app.pointer.mode == "pointing" and "keeps your note" in app.pointer.caption_label.get_text())
     pump(0.3)
@@ -235,7 +237,8 @@ def scenario_ask_and_point() -> dict:
     pump(3, until=lambda: app.pointer.mode == "following")
     pump(0.2)
     app.listener.stop()
-    return {"composer_opened": composer_opened, "composer_has_keyboard": composer_has_keyboard, "typed": typed,
+    return {"hidden_for_the_screenshot": hidden_for_the_screenshot,
+            "composer_opened": composer_opened, "composer_has_keyboard": composer_has_keyboard, "typed": typed,
             "composer_closed": composer_closed, "thinking": thinking, "asked": asked, "save_center": list(save_center),
             "pointed_at": pointed_at, "caption": caption, "after_escape": [app.pointer.mode, app.pointer.caption.get_visible()]}
 
@@ -457,6 +460,48 @@ def scenario_guided_steps() -> dict:
     app.listener.stop()
     return {"steps": steps, "questions": questions, "dark_mode_on": dark_mode.get_active(),
             "dialog_open": dialog.get_visible(), "settings_center": center_of(settings_button)}
+
+
+def scenario_ctrl_click() -> dict:
+    """Right ctrl + click (a link in a new tab) and left ctrl + click twice (multi-select) are
+    shortcuts with the mouse: neither may start a take or open the ask box."""
+    app = wire_up("Control_R", start_recording=StandInRecording, transcribe=lambda _wav: "")
+    orb_history: list = []
+    app.dictation.orb.listeners.append(lambda orb: orb_history.append([orb.phase, orb.message]))
+    app.listener.start()
+    move_mouse(400, 300)
+    pump(0.3)
+    key("Control_R", True)
+    pump(0.05)
+    _xtest.fake_input(keyboard, X.ButtonPress, 1)
+    _xtest.fake_input(keyboard, X.ButtonRelease, 1)
+    keyboard.sync()
+    pump(0.05)
+    key("Control_R", False)
+    pump(0.5)
+    right_ctrl_state = app.dictation.state.value
+    for _ in range(2):
+        key("Control_L", True)
+        pump(0.03)
+        _xtest.fake_input(keyboard, X.ButtonPress, 1)
+        _xtest.fake_input(keyboard, X.ButtonRelease, 1)
+        keyboard.sync()
+        pump(0.03)
+        key("Control_L", False)
+        pump(0.1)
+    pump(0.5)
+    app.listener.stop()
+    return {"take_state_after_right_ctrl_click": right_ctrl_state, "orb_history": orb_history,
+            "ask_box_open": app.composer.is_open}
+
+
+def scenario_hidpi_screenshot() -> dict:
+    """Run with GDK_SCALE=2: the picture has twice the pixels of the screen GTK reports."""
+    from openclicky_linux.pointing import point_on_screens
+    from openclicky_linux.screen import capture_screens, screen_size
+    pictures = capture_screens()
+    return {"screen": list(screen_size()), "picture": [pictures[0].width, pictures[0].height], "scale": pictures[0].scale,
+            "middle_of_the_picture_on_screen": list(point_on_screens(pictures[0].width / 2, pictures[0].height / 2, None, pictures))}
 
 if __name__ == "__main__":
     print(json.dumps(globals()[f"scenario_{sys.argv[1]}"]()))

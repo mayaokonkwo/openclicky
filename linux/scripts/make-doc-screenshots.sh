@@ -26,5 +26,7 @@ fi
 # An empty OpenClicky home unless --live: the Settings picture shows example keys, never yours.
 home="$(mktemp -d)"
 if [ "${1:-}" = "--live" ]; then home="${OPENCLICKY_HOME:-$HOME/.openclicky}"; fi
+# Its own config and state folders: the Settings picture never touches your autostart entry or log.
 DISPLAY=":${number}" NO_AT_BRIDGE=1 GDK_BACKEND=x11 OPENCLICKY_HOME="$home" \
+  XDG_CONFIG_HOME="$(mktemp -d)" XDG_STATE_HOME="$(mktemp -d)" \
   "$python" "${linux_directory}/scripts/make-doc-screenshots.py" "$@"

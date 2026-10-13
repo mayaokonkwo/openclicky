@@ -23,11 +23,15 @@ from .ask import Conversation, Screenshot, as_screen_list
 from .pointing import parse_pointing, point_on_screens
 
 THINKING_CAPTION = "thinking…"
-# The ask box is hidden before the screenshot is taken, or the model would see the question box.
+# The ask box, the pointer and its caption are out of sight before the screenshot is taken (the
+# model would see them, and on a guided step the pointer would cover the very thing to check); a
+# compositor needs a moment to draw the screen without them.
 COMPOSER_HIDE_SETTLE_SECONDS = 0.15
 
 
 class PointerSurface(Protocol):
+    def hide_for_screenshot(self) -> None: ...
+    def show_after_screenshot(self) -> None: ...
     def show_caption(self, text: str, hold_seconds: float | None) -> None: ...
     def dismiss_caption(self) -> None: ...
     def fly_to(self, screen_x: int, screen_y: int) -> None: ...
@@ -90,7 +94,7 @@ class AskController:
         this_question_id = next(self._question_ids)
         self.question_id = this_question_id
         self.is_answering = True
-        self.pointer.show_caption(THINKING_CAPTION, hold_seconds=None)
+        self.pointer.hide_for_screenshot()
         self.host.schedule(COMPOSER_HIDE_SETTLE_SECONDS, lambda: self._capture_and_ask(question, this_question_id))
 
     def _capture_and_ask(self, question: str, this_question_id: int) -> None:
@@ -99,8 +103,11 @@ class AskController:
         try:
             screenshot = self.host.capture_screen()
         except Exception as failure:  # noqa: BLE001 - shown to the person, like any other failure
+            self.pointer.show_after_screenshot()
             self._show_failure(f"couldn't see the screen: {failure}", this_question_id)
             return
+        self.pointer.show_after_screenshot()
+        self.pointer.show_caption(THINKING_CAPTION, hold_seconds=None)
         conversation = self.conversation
         self.host.run_in_background(
             lambda: (screenshot, self.host.ask(question, screenshot, conversation)),
@@ -117,7 +124,9 @@ class AskController:
         is_a_guided_step = guided.contains_marker(answer)
         result = parse_pointing(guided.removing_markers(answer))
         # Kept without the tag and the marker, as on the Mac: they would only confuse later answers.
-        self.conversation.remember(question, result.text)
+        # Never empty: an answer that was only a tag would be an empty assistant turn, which
+        # Anthropic refuses, and every question after it would fail.
+        self.conversation.remember(question, result.text or f"(pointed at {result.label or 'nothing'})")
         if result.has_point:
             screen_x, screen_y = point_on_screens(result.x, result.y, result.screen_number, as_screen_list(screenshot))
             self.pointer.fly_to(screen_x, screen_y)
@@ -142,6 +151,7 @@ class AskController:
         it did anything."""
         if not self.is_answering and not self.is_showing_answer and not self.is_waiting_for_step:
             return False
+        self.pointer.show_after_screenshot()
         self._stop_waiting_for_step()
         self.guide_steps_given = 0
         self.question_id = next(self._question_ids)

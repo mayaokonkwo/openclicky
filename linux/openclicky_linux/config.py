@@ -79,6 +79,21 @@ def load_settings(shell_json_path: Path | None = None, environment: dict[str, st
     )
 
 
+# Environment variables that win over shell.json, and the Settings field each one hides.
+ENVIRONMENT_OVERRIDES = {
+    "OPENCLICKY_OPENAI_KEY": "OpenAI key",
+    "OPENCLICKY_ANTHROPIC_KEY": "Anthropic key",
+    "OPENCLICKY_OPENROUTER_KEY": "OpenRouter key",
+    "BACKEND_URL": "Backend",
+}
+
+
+def environment_overrides(environment: dict[str, str] | None = None) -> list[str]:
+    """The Settings fields an environment variable overrides right now (their names, not values)."""
+    environment = os.environ if environment is None else environment
+    return [field for variable, field in ENVIRONMENT_OVERRIDES.items() if _cleaned(environment.get(variable))]
+
+
 # The Settings window's fields → shell.json keys. An empty field removes its key.
 SETTINGS_FIELDS = {
     "openai_api_key": "openaiApiKey",
@@ -96,15 +111,18 @@ def save_settings(changes: dict[str, str | None], shell_json_path: Path | None =
     """Writes the given fields (keys of `SETTINGS_FIELDS`) into shell.json, keeping every other key.
     Written whole to a temporary file and moved into place, readable by this user only: it holds keys."""
     path = shell_json_path or openclicky_directory() / "shell.json"
+    # A shell.json that is a link (dotfiles kept in a repository) is written where it points, and
+    # stays a link.
+    path = path.resolve()
     try:
         current = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(current, dict):
-            current = {}
     except FileNotFoundError:
         current = {}
     except ValueError as broken:
         # Never overwrite a file that could not be read: the person's other settings are in it.
         raise ValueError(f"{path} is not valid json; fix or remove it first") from broken
+    if not isinstance(current, dict):
+        raise ValueError(f"{path} is not a json object; fix or remove it first")
     for field_name, value in changes.items():
         json_key = SETTINGS_FIELDS[field_name]
         cleaned = _cleaned(value)

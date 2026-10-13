@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Callable
 
 import gi
@@ -20,7 +21,8 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("GdkX11", "3.0")
 from gi.repository import Gdk, GdkPixbuf, GdkX11, GLib, Gtk  # noqa: E402
 
-from .config import HOSTED_BACKEND_URL, LinuxSettings, load_settings, save_settings  # noqa: E402
+from . import autostart  # noqa: E402
+from .config import HOSTED_BACKEND_URL, LinuxSettings, environment_overrides, load_settings, save_settings  # noqa: E402
 from .presence import PRESENCE_LABELS  # noqa: E402
 from .pointer_view import POINTER_OUTLINE, POINTER_HEIGHT, POINTER_WIDTH  # noqa: E402
 from .x11 import polygon_rows  # noqa: E402
@@ -43,6 +45,7 @@ class ComposerWindow:
     TOP_MARGIN = 120
 
     def __init__(self, on_submit: Callable[[str], None]) -> None:
+        self.closed_by_escape_at = 0.0
         self.window = Gtk.Window(title="Ask OpenClicky")
         self.window.set_decorated(False)
         self.window.set_keep_above(True)
@@ -62,9 +65,15 @@ class ComposerWindow:
 
     def _on_key(self, _window, event) -> bool:
         if event.keyval == Gdk.KEY_Escape:
+            # The key watcher sees this esc too; it must only close the box, not also dismiss the
+            # answer on screen or end a guide under way.
+            self.closed_by_escape_at = time.monotonic()
             self.hide()
             return True
         return False
+
+    def esc_just_closed_it(self) -> bool:
+        return time.monotonic() - self.closed_by_escape_at < 0.5
 
     def show(self) -> None:
         self.entry.set_text("")
@@ -106,6 +115,10 @@ class SettingsWindow:
         self.fields["openrouter_api_key"] = self._text(layout, "OpenRouter key", "sk-or-… (answers, when there is no Anthropic key)", secret=True)
         self.fields["account_token"] = self._text(layout, "OpenClicky token", "an account token, used when a key is missing", secret=True)
         self.fields["backend_url"] = self._text(layout, "Backend", HOSTED_BACKEND_URL)
+
+        self._heading(layout, "Startup")
+        self.start_at_login = Gtk.CheckButton(label="Start OpenClicky when I log in")
+        layout.pack_start(self.start_at_login, False, False, 0)
 
         self.routes_label = Gtk.Label(xalign=0)
         self.routes_label.set_line_wrap(True)
@@ -161,7 +174,11 @@ class SettingsWindow:
     # MARK: values
 
     def load(self) -> None:
-        settings = load_settings()
+        # The file's own values: a key or backend given in the environment (OPENCLICKY_*_KEY,
+        # BACKEND_URL) is never shown here, so Save never writes it into shell.json, which the
+        # Mac app reads too. The window says when the environment wins.
+        settings = load_settings(environment={})
+        overridden = environment_overrides()
         for field_name, widget in self.fields.items():
             value = getattr(settings, field_name)
             if isinstance(widget, Gtk.ComboBoxText):
@@ -173,7 +190,8 @@ class SettingsWindow:
                 widget.set_text("" if value == HOSTED_BACKEND_URL else value)
             else:
                 widget.set_text(value or "")
-        self.status_label.set_text("")
+        self.start_at_login.set_active(autostart.is_enabled())
+        self.status_label.set_text(f"Set in the environment, which wins while it is set: {', '.join(overridden)}." if overridden else "")
         self._update_routes()
 
     def values(self) -> dict[str, str | None]:
@@ -195,6 +213,12 @@ class SettingsWindow:
             save_settings(self.values())
         except (OSError, ValueError) as failure:
             self.status_label.set_text(f"Not saved: {failure}")
+            return
+        try:
+            autostart.set_enabled(self.start_at_login.get_active())
+        except OSError as failure:
+            self.status_label.set_text(f"Saved, but starting at login could not be changed: {failure}")
+            self.on_saved(load_settings())
             return
         self.status_label.set_text("Saved. A new dictation key takes effect when OpenClicky restarts.")
         self.on_saved(load_settings())

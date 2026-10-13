@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
-from . import guided
+from . import applog, guided
 from .config import LinuxSettings
 
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
@@ -180,6 +181,18 @@ def answer_text(kind: str, response: dict) -> str:
 
 def ask(question: str, screenshot: "Screenshot | list[Screenshot]", conversation: Conversation, settings: LinuxSettings) -> str:
     routed = request_for(question, screenshot, conversation, settings)
+    started = time.monotonic()
+    try:
+        answer = _send(routed)
+    except AskError as failure:
+        applog.append(f"ask: {routed.kind} failed after {time.monotonic() - started:.1f} s: {failure}")
+        raise
+    applog.append(f"ask: {routed.kind} answered in {time.monotonic() - started:.1f} s, {len(as_screen_list(screenshot))} screen(s)"
+                  f"{', a guided step' if guided.contains_marker(answer) else ''}")
+    return answer
+
+
+def _send(routed: AskRequest) -> str:
     vendor = {"anthropic": "anthropic", "openrouter": "openrouter", "openai": "openai", "backend": "the openclicky backend"}[routed.kind]
     try:
         with urllib.request.urlopen(routed.request, timeout=REQUEST_TIMEOUT_SECONDS) as response:

@@ -35,18 +35,30 @@ class ClipboardPaster:
         Gdk.Display.get_default().flush()
 
     def paste(self, text: str, window: FocusedWindow | None) -> bool:
-        previous_text = self._clipboard.wait_for_text()
-        self.copy_to_clipboard(text)
-        self._before_keystroke()
-        if not send_paste_keystroke(self._xlib_display, with_shift=bool(window and window.is_terminal)):
+        """Puts `text` on the clipboard, posts the paste keystroke, and puts the person's own clipboard
+        text back afterwards. The old clipboard is read asynchronously (`request_text`), never with
+        `wait_for_text`: that runs a nested main loop, in which a queued esc or a new key press would
+        be handled in the middle of a take's paste. False when no keystroke can be posted (no XTEST)."""
+        if not self._xlib_display.has_extension("XTEST"):
             return False
+        with_shift = bool(window and window.is_terminal)
 
-        def restore_previous_clipboard() -> bool:
-            if previous_text is not None and self._clipboard.wait_for_text() == text:
-                self.copy_to_clipboard(previous_text)
-            return False
+        def paste_after_reading_the_old_clipboard(_clipboard, previous_text) -> None:
+            self.copy_to_clipboard(text)
+            self._before_keystroke()
+            send_paste_keystroke(self._xlib_display, with_shift=with_shift)
 
-        GLib.timeout_add(CLIPBOARD_RESTORE_DELAY_MILLISECONDS, restore_previous_clipboard)
+            def restore_previous_clipboard() -> bool:
+                def restore_if_still_ours(_clipboard, current_text) -> None:
+                    # Only if nobody copied anything since: never overwrite what the person copied.
+                    if previous_text is not None and current_text == text:
+                        self.copy_to_clipboard(previous_text)
+                self._clipboard.request_text(restore_if_still_ours)
+                return False
+
+            GLib.timeout_add(CLIPBOARD_RESTORE_DELAY_MILLISECONDS, restore_previous_clipboard)
+
+        self._clipboard.request_text(paste_after_reading_the_old_clipboard)
         return True
 
 

@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -38,10 +39,14 @@ def private_display():
     server.wait(timeout=5)
 
 
-def run_scenario(name: str, display: str, openclicky_home: Path | None = None) -> dict:
+def run_scenario(name: str, display: str, openclicky_home: Path | None = None, extra_environment: dict | None = None) -> dict:
     environment = {key: value for key, value in os.environ.items() if key not in ("WAYLAND_DISPLAY", "XAUTHORITY")}
     environment.update(DISPLAY=display, PYTHONPATH=str(LINUX_DIRECTORY), GDK_BACKEND="x11", NO_AT_BRIDGE="1",
-                       OPENCLICKY_HOME=str(openclicky_home or LINUX_DIRECTORY / "tests" / "no-such-openclicky-home"))
+                       OPENCLICKY_HOME=str(openclicky_home or LINUX_DIRECTORY / "tests" / "no-such-openclicky-home"),
+                       # Never the person's own autostart folder or log.
+                       XDG_CONFIG_HOME=tempfile.mkdtemp(prefix="openclicky-test-config-"),
+                       XDG_STATE_HOME=tempfile.mkdtemp(prefix="openclicky-test-state-"))
+    environment.update(extra_environment or {})
     finished = subprocess.run([sys.executable, str(LINUX_DIRECTORY / "tests" / "x11_scenarios.py"), name],
                               env=environment, capture_output=True, text=True, timeout=60)
     assert finished.returncode == 0, finished.stderr
@@ -87,6 +92,7 @@ def test_left_ctrl_twice_asks_and_the_pointer_flies_to_the_answer(private_displa
     assert outcome["composer_opened"] and outcome["composer_has_keyboard"]
     assert outcome["typed"] == "where do i save this?"
     assert outcome["composer_closed"]
+    assert outcome["hidden_for_the_screenshot"]  # the model never sees the pointer
     assert outcome["thinking"].startswith("t")  # typing out "thinking…"
     # The question went with a real screenshot of the whole screen (the private display is 1280x800).
     assert outcome["asked"] == [["where do i save this?", 1, 1280, 800, True]]
@@ -154,3 +160,20 @@ def test_live_a_real_model_guides_step_by_step(private_display):
     outcome = run_scenario("guided_steps", private_display, openclicky_home=Path.home() / ".openclicky")
     assert outcome["dark_mode_on"], outcome
     assert outcome["steps"][-1]["waiting"] is False, outcome
+
+
+def test_ctrl_click_never_starts_a_take_or_opens_the_ask_box(private_display):
+    outcome = run_scenario("ctrl_click", private_display)
+    # Without the fix: a tap, so a take kept listening (and the microphone open) until the next tap.
+    assert outcome["take_state_after_right_ctrl_click"] == "idle"
+    assert ["failed", "cancelled, that was a shortcut"] in outcome["orb_history"]
+    assert outcome["ask_box_open"] is False
+
+
+def test_a_hidpi_screen_maps_points_back_correctly(private_display):
+    outcome = run_scenario("hidpi_screenshot", private_display, extra_environment={"GDK_SCALE": "2"})
+    # GTK reports a 640x400 screen; the picture has its real 1280x800 pixels: 2 picture pixels each.
+    assert outcome["screen"] == [640, 400]
+    assert outcome["picture"] == [1280, 800]
+    assert outcome["scale"] == 2.0
+    assert outcome["middle_of_the_picture_on_screen"] == [320, 200]

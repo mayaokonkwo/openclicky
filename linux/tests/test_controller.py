@@ -214,3 +214,54 @@ def test_a_microphone_that_will_not_open_fails_the_take_at_once():
     desktop.recorder_failure = None
     controller.handle(DictationPressed())
     assert controller.state is TakeState.LISTENING
+
+
+def test_a_window_that_cannot_be_told_at_press_gets_nothing_the_words_are_copied():
+    desktop, controller, orb = make()
+    desktop.window = None  # no window manager answer, or an X error, at press
+    controller.handle(DictationPressed())
+    desktop.window = FocusedWindow(window_id=9, app_class="chat")  # whatever is in front later
+    controller.handle(DictationReleased(was_tap=False))
+    desktop.finish_background_work()
+    assert desktop.pasted == []
+    assert desktop.copied == ["Hello there"]
+    assert orb.message == "couldn't tell which window. copied, press ctrl+v"
+
+
+def test_a_window_that_cannot_be_told_at_release_gets_nothing_either():
+    desktop, controller, orb = make()
+    controller.handle(DictationPressed())
+    desktop.window = None
+    controller.handle(DictationReleased(was_tap=False))
+    desktop.finish_background_work()
+    assert desktop.pasted == []
+    assert desktop.copied == ["Hello there"]
+
+
+def test_a_paste_that_throws_leaves_the_words_on_the_clipboard_and_the_take_ends():
+    desktop, controller, orb = make()
+
+    def broken_paste(text, window):
+        raise RuntimeError("BadWindow")
+    controller.host.paste = broken_paste
+    controller.handle(DictationPressed())
+    controller.handle(DictationReleased(was_tap=False))
+    desktop.finish_background_work()
+    assert controller.state is TakeState.IDLE
+    assert desktop.copied == ["Hello there"]
+    assert orb.message == "couldn't paste. copied, press ctrl+v"
+
+
+def test_esc_handled_while_the_words_are_delivered_wins():
+    desktop, controller, orb = make()
+
+    def paste_while_esc_arrives(text, window):
+        controller.handle(EscapePressed())  # what a nested main loop used to let in
+        return True
+    controller.host.paste = paste_while_esc_arrives
+    controller.handle(DictationPressed())
+    controller.handle(DictationReleased(was_tap=False))
+    desktop.finish_background_work()
+    assert controller.state is TakeState.IDLE
+    assert orb.phase == "failed" and orb.message == "cancelled"
+    assert controller.finished_takes == []

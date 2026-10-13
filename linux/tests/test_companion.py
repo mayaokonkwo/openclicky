@@ -7,6 +7,13 @@ from openclicky_linux.companion import THINKING_CAPTION, AskController, AskHost
 class FakePointer:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        self.hidden = False
+
+    def hide_for_screenshot(self):
+        self.hidden = True
+
+    def show_after_screenshot(self):
+        self.hidden = False
 
     def show_caption(self, text, hold_seconds):
         self.calls.append(("caption", text, hold_seconds is not None))
@@ -71,8 +78,15 @@ def test_a_question_shows_thinking_then_flies_to_the_point_and_shows_the_answer(
     assert desktop.composer_open
     asking.submit("  where do i save?  ")
     assert not desktop.composer_open
-    assert pointer.calls == [("caption", THINKING_CAPTION, False)]
+    # Out of sight until the screenshot is taken, so the model never sees the pointer or a caption.
+    assert pointer.hidden and pointer.calls == []
+    seen_while_capturing = []
+    desktop.host_capture = desktop.screenshot
+    asking.host.capture_screen = lambda: (seen_while_capturing.append(pointer.hidden), desktop.screenshot)[1]
     desktop.run_everything()
+    assert seen_while_capturing == [True]
+    assert not pointer.hidden
+    assert pointer.calls[0] == ("caption", THINKING_CAPTION, False)
     assert desktop.asked == ["where do i save?"]
     # The screenshot was half size: the point doubles on the screen.
     assert pointer.calls[1:] == [("fly", 784, 490), ("caption", "click save, top left.", True)]
@@ -329,3 +343,13 @@ def test_the_next_step_request_repeats_the_goal():
 def test_the_ask_prompt_explains_the_marker():
     from openclicky_linux.ask import SYSTEM_PROMPT
     assert "[NEXT]" in SYSTEM_PROMPT and guided.NEXT_STEP_REQUEST_OPENING in SYSTEM_PROMPT
+
+
+def test_an_answer_that_is_only_a_tag_never_leaves_an_empty_turn_in_the_conversation():
+    desktop, pointer, asking = make()
+    desktop.answer = "[POINT:10,20:save] [NEXT]"
+    asking.submit("where do i save?")
+    desktop.run_everything()
+    question, remembered = asking.conversation.exchanges[0]
+    assert remembered.strip(), "an empty assistant turn makes Anthropic refuse every later question"
+    assert remembered == "(pointed at save)"

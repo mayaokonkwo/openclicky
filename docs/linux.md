@@ -101,6 +101,10 @@ CLI read, and leaves everything else in it alone; the file stays readable by you
 With several, answers use the first in that order, as the Mac app does. Your own keys go straight
 to their company and never to the OpenClicky backend.
 
+**Start OpenClicky when I log in** adds it to your desktop's autostart (`~/.config/autostart`). A key
+set in an environment variable (`OPENCLICKY_OPENROUTER_KEY` and the like) wins over Settings while it
+is set; Settings says so, and never copies it into the file.
+
 ## Install
 
 You need an **X11 session** (at the login screen, pick the session called "Xorg" or "X11" rather
@@ -136,6 +140,8 @@ have one; GNOME needs an extension); without one, the shortcuts still work and S
   clicks only while a guide waits for a step), and the pointer only reads where your mouse is.
 - A guide sends a fresh screenshot after each step you do, until it ends.
 - Keys live in `~/.openclicky/shell.json`, readable by your user only.
+- Your own pointer and captions are hidden while a screenshot is taken, so they never cover what you
+  asked about.
 
 ## When something does not work
 
@@ -149,7 +155,8 @@ have one; GNOME needs an extension); without one, the shortcuts still work and S
 | Left ctrl twice does nothing | Tap, don't hold, and press nothing in between: ctrl+C never counts. |
 
 `openclicky-linux --check` prints what it found: the key, the recorder, where dictation and answers
-go, the language and the pointer setting.
+go, the language and the pointer setting. What happened, and how long it took, is in
+`~/.local/state/openclicky/app.log` (never your words, questions, answers or keys).
 
 ## For developers
 

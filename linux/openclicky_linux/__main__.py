@@ -16,6 +16,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from . import applog
 from .ask import AskError, Conversation, Screenshot, ask as ask_model, request_for
 from .config import LinuxSettings, load_settings
 from .controller import DictationHost, DictationTakeController, OrbModel
@@ -140,7 +141,7 @@ def wire_up(dictation_key: str, start_recording: Callable[[], Any], transcribe: 
         if isinstance(event, TextComposerRequested):
             asking.open_composer()
             return
-        if isinstance(event, EscapePressed) and not dictation.is_take_in_progress:
+        if isinstance(event, EscapePressed) and not dictation.is_take_in_progress and not composer.esc_just_closed_it():
             asking.escape()
         dictation.handle(event)
 
@@ -156,7 +157,8 @@ def wire_up(dictation_key: str, start_recording: Callable[[], Any], transcribe: 
         on_composer_key=lambda is_down, at_seconds: deliver(
             recognizer.composer_key_down(at_seconds) if is_down else recognizer.composer_key_up(at_seconds)),
         # Clicks and keys, for a guided step waiting to be done (ignored unless one waits).
-        on_step_input=lambda kind: GLib.idle_add(lambda: (asking.step_input(kind), False)[1]),
+        on_step_input=lambda kind: GLib.idle_add(lambda: (
+            None if kind == "escape" and composer.esc_just_closed_it() else asking.step_input(kind), False)[1]),
         display_name=display_name,
     )
     listener_holder["listener"] = listener
@@ -208,14 +210,22 @@ def main(argv: list[str] | None = None) -> int:
     gi.require_version("Gtk", "3.0")
     from gi.repository import GLib, Gtk
 
-    app = wire_up(dictation_key, start_recording=MicrophoneRecording,
-                  transcribe=lambda wav_bytes: transcribe(wav_bytes, load_settings()),
-                  with_tray=True, on_quit=Gtk.main_quit)
-    app.listener.start()
+    log_file = applog.start()
+    try:
+        app = wire_up(dictation_key, start_recording=MicrophoneRecording,
+                      transcribe=lambda wav_bytes: transcribe(wav_bytes, load_settings()),
+                      with_tray=True, on_quit=Gtk.main_quit)
+        app.listener.start()
+    except (ValueError, RuntimeError) as problem:
+        # A dictation key this keyboard does not have, or an X server without RECORD: one sentence,
+        # not a traceback.
+        applog.append(f"could not start: {problem}")
+        print(f"openclicky could not start: {problem}", file=sys.stderr)
+        return 1
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, lambda: (Gtk.main_quit(), False)[1])
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, lambda: (Gtk.main_quit(), False)[1])
     print(f"openclicky: hold {dictation_key} and speak, let go to type it (tap twice or esc cancels). "
-          "tap left ctrl twice to ask about your screen. settings are in the tray icon. ctrl+c quits.")
+          f"tap left ctrl twice to ask about your screen. settings are in the tray icon. ctrl+c quits. log: {log_file}")
     try:
         Gtk.main()
     finally:
