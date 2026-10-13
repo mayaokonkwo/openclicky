@@ -681,15 +681,26 @@ def scenario_offline_settings() -> dict:
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:bz2") as archive:
         for name in offline.PARAKEET.files:
-            data = b"stand-in " * 200_000  # a couple of MB, so the progress moves
+            data = os.urandom(600_000)  # random, so it does not compress: ~2.4 MB to download, so the progress moves
             info = tarfile.TarInfo(f"{offline.PARAKEET.folder_name}/{name}")
             info.size = len(data)
             archive.addfile(info, io.BytesIO(data))
     archive_bytes = buffer.getvalue()
     with open(os.path.join(served, "model.tar.bz2"), "wb") as archive_file:
         archive_file.write(archive_bytes)
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=served)
-    handler.log_message = lambda *_arguments: None
+    class SlowHandler(http.server.SimpleHTTPRequestHandler):
+        """Sends the archive in small pieces with pauses, as a real download arrives: on a fast
+        machine the whole stand-in came in before the test could see "Downloading…" (CI did)."""
+
+        def copyfile(self, source, outputfile):
+            while piece := source.read(128 * 1024):
+                outputfile.write(piece)
+                time.sleep(0.05)
+
+        def log_message(self, *_arguments):
+            pass
+
+    handler = functools.partial(SlowHandler, directory=served)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     asset = offline.ModelAsset(url=f"http://127.0.0.1:{server.server_address[1]}/model.tar.bz2",
@@ -703,7 +714,7 @@ def scenario_offline_settings() -> dict:
     states = [[settings.offline_status.get_text(), settings.offline_button.get_label()]]
     routes_before = settings.routes_label.get_text()
     settings.start_offline_download(asset)
-    pump(0.05)
+    pump(0.2)
     states.append(["downloading" if settings.offline_status.get_text().startswith("Downloading") else settings.offline_status.get_text(),
                    settings.offline_button.get_label()])
     pump(20, until=lambda: settings.offline_button.get_label() == "Remove")
