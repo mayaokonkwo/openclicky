@@ -87,8 +87,10 @@ From the tray icon (**Settings…**), or `openclicky-linux settings`:
 
 ![The Settings window: dictation key, language, show the pointer, and the keys](media/linux/settings.png)
 
-*Shown with an example key, not a real one.* Below the fields it says where dictation and answers
-will go, as you type. **Save** writes into `~/.openclicky/shell.json`, the file the Mac app and the
+*Shown with an example key, not a real one.* **Microphone** lists every input your sound system
+knows (a headset plugged in since shows up next time Settings opens); **Test** records three
+seconds with a level meter and says whether it heard you, keeping nothing. Below the fields it says
+where dictation and answers will go, as you type. **Save** writes into `~/.openclicky/shell.json`, the file the Mac app and the
 CLI read, and leaves everything else in it alone; the file stays readable by you only.
 
 | You add | Answers come from | Dictation goes to |
@@ -150,7 +152,7 @@ have one; GNOME needs an extension); without one, the shortcuts still work and S
 | "needs an X11 session" | Log out and pick the Xorg / X11 session. |
 | "asking needs an anthropic, openrouter or openai key…" | Add a key in Settings. |
 | "no microphone recorder found" | Install `pulseaudio-utils` (or `alsa-utils`). |
-| "didn't catch that" every time | Check the microphone in your sound settings. In a virtual machine, the host must pass the microphone through. |
+| "didn't catch that" every time | Settings → Microphone → **Test**. "Heard nothing at all": pick another microphone, or unmute it in your sound settings; in a virtual machine, the host must pass the microphone through. |
 | The pointer never shows | Settings → Show the pointer: "after a shake" and "only while answering" keep it hidden on purpose. |
 | Left ctrl twice does nothing | Tap, don't hold, and press nothing in between: ctrl+C never counts. |
 

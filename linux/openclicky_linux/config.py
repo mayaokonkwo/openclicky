@@ -4,8 +4,9 @@ Keys read here: `openaiApiKey`, `anthropicApiKey` and `openRouterApiKey` (own ke
 to their vendor; `answerModels.openrouter` picks the OpenRouter model, as on the Mac),
 `token` and `backendUrl` (an OpenClicky account, the fallback), `language` (dictation and answers;
 English when unset), and the Linux-only `linuxDictationKey` (an X keysym name, `Control_R` by
-default: Linux never sees fn) and `linuxPointer` ("always", "whileMoving", "onShake", or
-"whenAnswering": see `presence.py`). `BACKEND_URL`, `OPENCLICKY_OPENAI_KEY` and `OPENCLICKY_ANTHROPIC_KEY` in the
+default: Linux never sees fn), `linuxPointer` ("always", "whileMoving", "onShake", or
+"whenAnswering": see `presence.py`) and `linuxMicrophone` (a sound server source name; unset, the
+system default). `BACKEND_URL`, `OPENCLICKY_OPENAI_KEY` and `OPENCLICKY_ANTHROPIC_KEY` in the
 environment win over the file, as on the Mac.
 
 `save_settings` writes the Settings window's fields back and leaves every other key as it was: the
@@ -40,6 +41,8 @@ class LinuxSettings:
     language_code: str | None = None
     dictation_key: str = DEFAULT_DICTATION_KEY
     pointer_presence: str = "always"
+    # A PulseAudio/PipeWire source name; None: the system default.
+    microphone: str | None = None
 
     @property
     def bare_language_code(self) -> str | None:
@@ -76,6 +79,7 @@ def load_settings(shell_json_path: Path | None = None, environment: dict[str, st
         language_code=_cleaned(raw.get("language")),
         dictation_key=_cleaned(raw.get("linuxDictationKey")) or DEFAULT_DICTATION_KEY,
         pointer_presence=raw.get("linuxPointer") if raw.get("linuxPointer") in POINTER_PRESENCES else "always",
+        microphone=_cleaned(raw.get("linuxMicrophone")),
     )
 
 
@@ -104,6 +108,7 @@ SETTINGS_FIELDS = {
     "language_code": "language",
     "dictation_key": "linuxDictationKey",
     "pointer_presence": "linuxPointer",
+    "microphone": "linuxMicrophone",
 }
 
 

@@ -192,3 +192,15 @@ def test_the_esc_that_closes_the_ask_box_does_not_also_end_a_guide(private_displ
     assert outcome["waiting_before"]
     assert outcome["after_first_escape"] == {"ask_box_open": False, "guide_waiting": True}
     assert outcome["guide_waiting_after_second_escape"] is False
+
+
+def test_settings_picks_and_tests_the_microphone(private_display, tmp_path):
+    outcome = run_scenario("microphone_settings", private_display, openclicky_home=tmp_path)
+    assert outcome["menu"] == ["System default (Built-in Audio)", "Yeti Stereo Microphone", "Built-in Audio"]
+    assert outcome["results"]["alsa_input.usb-yeti"] == {"verdict": "✓ Heard you. This microphone works.", "meter_moved": True}
+    assert outcome["results"]["default"]["verdict"].startswith("✕ Heard nothing at all")
+    assert outcome["results"]["default"]["meter_moved"] is False
+    # The test records from the microphone picked in the menu; "System default" is no device at all.
+    assert outcome["started_with"][:2] == ["alsa_input.usb-yeti", None]
+    assert outcome["saved_microphone"] == "alsa_input.usb-yeti"
+    assert outcome["recorder_stopped_on_close"]

@@ -549,5 +549,60 @@ def scenario_escape_closing_the_ask_box_keeps_the_guide() -> dict:
     return {"waiting_before": waiting_before, "after_first_escape": after_first_escape,
             "guide_waiting_after_second_escape": app.asking.is_waiting_for_step}
 
+
+# A stand-in microphone: a 440 Hz tone (someone talking) or silence, as raw 16 kHz PCM on stdout,
+# streamed until it is stopped, the way parecord does.
+_TONE = ("import math, sys, time\n"
+         "chunk = b''.join(int(9000 * math.sin(2 * math.pi * 440 * n / 16000)).to_bytes(2, 'little', signed=True) for n in range(1600))\n"
+         "while True:\n    sys.stdout.buffer.write(chunk); sys.stdout.buffer.flush(); time.sleep(0.1)\n")
+_SILENCE = "import sys, time\nwhile True:\n    sys.stdout.buffer.write(bytes(3200)); sys.stdout.buffer.flush(); time.sleep(0.1)\n"
+
+
+def scenario_microphone_settings() -> dict:
+    from openclicky_linux import recorder, windows
+    from openclicky_linux.recorder import Microphone
+
+    windows.list_microphones = lambda: [Microphone("alsa_input.usb-yeti", "Yeti Stereo Microphone"),
+                                        Microphone("alsa_input.builtin", "Built-in Audio")]
+    windows.default_microphone_name = lambda: "alsa_input.builtin"
+    commands = {"alsa_input.usb-yeti": _TONE, "alsa_input.builtin": _SILENCE}
+    started_with = []
+
+    def stand_in_recording(microphone=None):
+        started_with.append(microphone)
+        return recorder.MicrophoneRecording(command=(sys.executable, "-c", commands[microphone or "alsa_input.builtin"]))
+    windows.MicrophoneRecording = stand_in_recording
+
+    app = wire_up("Control_R", start_recording=StandInRecording, transcribe=lambda _wav: "")
+    settings = app.settings_window
+    settings.show()
+    pump(0.5)
+    combo = settings.fields["microphone"]
+    menu = [row[0] for row in combo.get_model()]
+    results = {}
+    for choice in ("alsa_input.usb-yeti", "default"):
+        combo.set_active_id(choice)
+        settings.test_microphone(seconds=1.2)
+        loudest_bar = 0.0
+        deadline = time.monotonic() + 4
+        while settings._microphone_test is not None and time.monotonic() < deadline:
+            pump(0.05)
+            loudest_bar = max(loudest_bar, settings.microphone_level.get_value())
+        results[choice] = {"verdict": settings.microphone_test_result.get_text(), "meter_moved": loudest_bar > 0.3}
+        if choice == "alsa_input.usb-yeti":
+            screenshot("microphone-test")
+    combo.set_active_id("alsa_input.usb-yeti")
+    settings.save_button.clicked()
+    pump(0.3)
+    with open(os.path.join(os.environ["OPENCLICKY_HOME"], "shell.json"), encoding="utf-8") as saved_file:
+        saved = json.load(saved_file)
+    # A test still running when the window closes is stopped (the microphone is never left open).
+    settings.test_microphone(seconds=30)
+    running = settings._microphone_test
+    settings.window.hide()
+    pump(0.5)
+    return {"menu": menu, "results": results, "started_with": started_with, "saved_microphone": saved.get("linuxMicrophone"),
+            "recorder_stopped_on_close": running is not None and running._process.poll() is not None}
+
 if __name__ == "__main__":
     print(json.dumps(globals()[f"scenario_{sys.argv[1]}"]()))

@@ -217,7 +217,9 @@ def main(argv: list[str] | None = None) -> int:
 
     log_file = applog.start()
     try:
-        app = wire_up(dictation_key, start_recording=MicrophoneRecording,
+        app = wire_up(dictation_key,
+                  # The microphone is read for every take: one picked in Settings is used at once.
+                  start_recording=lambda: MicrophoneRecording(microphone=load_settings().microphone),
                       transcribe=lambda wav_bytes: transcribe(wav_bytes, load_settings()),
                       with_tray=True, on_quit=Gtk.main_quit)
         app.listener.start()

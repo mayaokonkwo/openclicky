@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Callable
 
 import gi
@@ -21,6 +22,7 @@ gi.require_version("GdkX11", "3.0")
 from gi.repository import Gdk, GdkPixbuf, GdkX11, GLib, Gtk  # noqa: E402
 
 from . import autostart  # noqa: E402
+from .recorder import MicrophoneRecording, RecorderUnavailable, default_microphone_name, level_of, list_microphones  # noqa: E402
 from .config import HOSTED_BACKEND_URL, LinuxSettings, environment_overrides, load_settings, save_settings  # noqa: E402
 from .presence import PRESENCE_LABELS  # noqa: E402
 from .pointer_view import POINTER_OUTLINE, POINTER_HEIGHT, POINTER_WIDTH  # noqa: E402
@@ -28,6 +30,20 @@ from .x11 import polygon_rows  # noqa: E402
 
 DICTATION_KEY_CHOICES = (("Control_R", "right ctrl"), ("Alt_R", "right alt"), ("Super_R", "right super"), ("Menu", "menu key"))
 POINTER_CHOICES = tuple(PRESENCE_LABELS.items())
+MICROPHONE_DEFAULT_ID = "default"
+MICROPHONE_TEST_SECONDS = 3.0
+# Below this the test heard nothing: room noise on a working microphone is above it, a microphone
+# that passes no sound at all (muted, or a virtual machine's with nothing behind it) stays far below.
+MICROPHONE_SILENCE_LEVEL = 0.002
+
+
+def microphone_test_verdict(loudest: float) -> str:
+    if loudest < MICROPHONE_SILENCE_LEVEL:
+        return ("✕ Heard nothing at all. Pick another microphone, or check it is not muted in your sound "
+                "settings. In a virtual machine, the host has to pass the microphone through.")
+    if loudest < 0.01:
+        return "✓ It hears something, but quietly. Speak closer, or raise its volume in your sound settings."
+    return "✓ Heard you. This microphone works."
 
 
 def present_with_focus(window: Gtk.Window) -> None:
@@ -98,6 +114,8 @@ class SettingsWindow:
         self.window.set_default_size(560, -1)
         self.window.set_border_width(18)
         self.window.connect("delete-event", lambda *_: self.window.hide() or True)
+        # A test still recording when the window closes stops: the microphone is never left open.
+        self.window.connect("hide", lambda _window: self._stop_microphone_test())
         layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.window.add(layout)
         self.fields: dict[str, Gtk.Widget] = {}
@@ -105,6 +123,7 @@ class SettingsWindow:
         self._heading(layout, "Dictation")
         self.fields["dictation_key"] = self._choice(layout, "Hold to dictate", DICTATION_KEY_CHOICES)
         self.fields["language_code"] = self._text(layout, "Language", "blank: the engine detects it (en, hi-IN, ta…)")
+        self.fields["microphone"] = self._microphone_row(layout)
         self._heading(layout, "Pointer")
         self.fields["pointer_presence"] = self._choice(layout, "Show the pointer", POINTER_CHOICES)
         self._heading(layout, "Keys & account")
@@ -155,6 +174,94 @@ class SettingsWindow:
         row.pack_start(widget, True, True, 0)
         layout.pack_start(row, False, False, 0)
 
+    def _microphone_row(self, layout: Gtk.Box) -> Gtk.ComboBoxText:
+        """The microphone menu, a Test button, and under them a level meter and what the test heard."""
+        combo = Gtk.ComboBoxText()
+        self.test_microphone_button = Gtk.Button(label="Test")
+        self.test_microphone_button.connect("clicked", lambda _button: self.test_microphone())
+        picker = Gtk.Box(spacing=8)
+        picker.pack_start(combo, True, True, 0)
+        picker.pack_start(self.test_microphone_button, False, False, 0)
+        self._row(layout, "Microphone", picker)
+        self.microphone_level = Gtk.LevelBar()
+        self.microphone_level.set_min_value(0)
+        self.microphone_level.set_max_value(1)
+        self.microphone_test_result = Gtk.Label(xalign=0)
+        self.microphone_test_result.set_line_wrap(True)
+        meter = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        meter.set_margin_start(162)
+        meter.pack_start(self.microphone_level, False, False, 0)
+        meter.pack_start(self.microphone_test_result, False, False, 0)
+        layout.pack_start(meter, False, False, 0)
+        self._microphone_test = None
+        return combo
+
+    def _fill_microphones(self, chosen: str | None) -> None:
+        """Asked of the sound server each time Settings opens, so a headset plugged in since shows up."""
+        combo = self.fields["microphone"]
+        combo.remove_all()
+        default_name = default_microphone_name()
+        microphones = list_microphones()
+        default_description = next((microphone.description for microphone in microphones if microphone.name == default_name), None)
+        combo.append(MICROPHONE_DEFAULT_ID, f"System default ({default_description})" if default_description else "System default")
+        for microphone in microphones:
+            combo.append(microphone.name, microphone.description)
+        if chosen and not any(microphone.name == chosen for microphone in microphones):
+            # Picked before and not connected now: kept, and said so, rather than silently dropped.
+            combo.append(chosen, f"{chosen} (not connected)")
+        combo.set_active_id(chosen or MICROPHONE_DEFAULT_ID)
+
+    def test_microphone(self, seconds: float = MICROPHONE_TEST_SECONDS) -> None:
+        """Records for a few seconds from the chosen microphone, shows how loud it is as it goes,
+        then says whether it heard anything. Nothing is kept or sent."""
+        if self._microphone_test is not None:
+            return
+        chosen = self.fields["microphone"].get_active_id()
+        microphone = None if chosen in (None, MICROPHONE_DEFAULT_ID) else chosen
+        try:
+            recording = MicrophoneRecording(microphone=microphone)
+        except (RecorderUnavailable, OSError) as problem:
+            self.microphone_test_result.set_text(f"✕ {problem}")
+            return
+        self._microphone_test = recording
+        self.test_microphone_button.set_sensitive(False)
+        self.microphone_test_result.set_text("Say something…")
+        loudest = [0.0]
+        started = time.monotonic()
+
+        def tick() -> bool:
+            if self._microphone_test is not recording:
+                return False
+            level = recording.current_level()
+            loudest[0] = max(loudest[0], level)
+            # Speech sits low on a linear scale; scaled up so talking fills most of the bar.
+            self.microphone_level.set_value(min(1.0, level * 6))
+            if time.monotonic() - started < seconds:
+                return True
+            self._finish_microphone_test(recording, loudest[0])
+            return False
+
+        GLib.timeout_add(100, tick)
+
+    def _finish_microphone_test(self, recording, loudest: float) -> None:
+        self._microphone_test = None
+        self.test_microphone_button.set_sensitive(True)
+        self.microphone_level.set_value(0)
+        try:
+            heard = recording.stop()
+        except RecorderUnavailable as problem:
+            self.microphone_test_result.set_text(f"✕ {problem}")
+            return
+        loudest = max(loudest, level_of(heard))
+        self.microphone_test_result.set_text(microphone_test_verdict(loudest))
+
+    def _stop_microphone_test(self) -> None:
+        if self._microphone_test is not None:
+            self._microphone_test.cancel()
+            self._microphone_test = None
+            self.test_microphone_button.set_sensitive(True)
+            self.microphone_level.set_value(0)
+
     def _text(self, layout: Gtk.Box, title: str, placeholder: str, secret: bool = False) -> Gtk.Entry:
         entry = Gtk.Entry()
         entry.set_placeholder_text(placeholder)
@@ -177,9 +284,12 @@ class SettingsWindow:
         # Mac app reads too. The window says when the environment wins.
         settings = load_settings(environment={})
         overridden = environment_overrides()
+        self.microphone_test_result.set_text("")
         for field_name, widget in self.fields.items():
             value = getattr(settings, field_name)
-            if isinstance(widget, Gtk.ComboBoxText):
+            if field_name == "microphone":
+                self._fill_microphones(value)
+            elif isinstance(widget, Gtk.ComboBoxText):
                 if not widget.set_active_id(value):
                     # A key picked by hand in shell.json that is not in the list is shown, not lost.
                     widget.append(value, value)
@@ -193,8 +303,12 @@ class SettingsWindow:
         self._update_routes()
 
     def values(self) -> dict[str, str | None]:
-        return {field_name: (widget.get_active_id() if isinstance(widget, Gtk.ComboBoxText) else widget.get_text())
-                for field_name, widget in self.fields.items()}
+        values = {field_name: (widget.get_active_id() if isinstance(widget, Gtk.ComboBoxText) else widget.get_text())
+                  for field_name, widget in self.fields.items()}
+        # "System default" is no key at all in shell.json.
+        if values.get("microphone") == MICROPHONE_DEFAULT_ID:
+            values["microphone"] = None
+        return values
 
     def _update_routes(self) -> None:
         values = self.values()

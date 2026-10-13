@@ -97,7 +97,7 @@ the Save and Delete buttons and stays put for "what is the capital of france?".
 | `gestures.py` | Hold, tap, double tap, esc and "a shortcut, not a take" from raw key downs and ups, with the Mac's timings. |
 | `x11.py` | The window in front (`_NET_ACTIVE_WINDOW`, `WM_CLASS`), the paste keystroke (XTEST), the listen-only key and click watcher (RECORD), window shapes (SHAPE). |
 | `desktop.py` | GTK 3: the clipboard paste and restore, the orb (a popup window that never takes the focus). |
-| `recorder.py` | 16 kHz mono PCM from `parecord` or `arecord`, wrapped as WAV. |
+| `recorder.py` | 16 kHz mono PCM from `parecord` (the microphone picked in Settings) or `arecord`, wrapped as WAV; the microphones the sound server knows (`pactl`, monitors left out); loudness for the Test meter. |
 | `transcriber.py` | Own OpenAI key → OpenAI; else account → `POST /agent/transcribe`; else a sentence naming what is missing. |
 | `formatter.py` | The Mac's `TakeFormatter.formatLocally`, ported: shortcuts, fillers, dictionary, sentence case. |
 | `config.py`, `space.py` | `~/.openclicky/shell.json` (read, and saved without touching other keys, mode 600, through a symlink, never over a file it cannot parse) and the dictionary/shortcut files. |
@@ -121,7 +121,7 @@ microphone, nothing on your screen):
 ```bash
 cd linux
 python3 -m venv --system-site-packages .venv && .venv/bin/pip install -e '.[test]'
-.venv/bin/python -m pytest             # 125 tests; the X11 ones start their own Xvfb
+.venv/bin/python -m pytest             # 131 tests; the X11 ones start their own Xvfb
 OPENCLICKY_SCREENSHOT_DIR=/tmp/shots .venv/bin/python -m pytest tests/test_x11.py   # and look at /tmp/shots
 scripts/make-doc-screenshots.sh        # remakes docs/media/linux/ (a scripted answer; --live uses your key)
 ```
