@@ -77,7 +77,8 @@ def test_a_question_shows_thinking_then_flies_to_the_point_and_shows_the_answer(
     assert desktop.asked == ["where do i save?"]
     # The screenshot was half size: the point doubles on the screen.
     assert pointer.calls[1:] == [("fly", 784, 490), ("caption", "click save, top left.", True)]
-    assert asking.conversation.exchanges == [("where do i save?", "[POINT:392,245:save button] click save, top left.")]
+    # Remembered without the tag, as on the Mac.
+    assert asking.conversation.exchanges == [("where do i save?", "click save, top left.")]
 
 
 def test_an_answer_without_a_point_stays_by_the_mouse():
@@ -141,3 +142,191 @@ def test_when_the_caption_runs_out_the_pointer_goes_home():
     asking.caption_finished()
     assert pointer.calls[-1] == ("home",)
     assert not asking.is_showing_answer
+
+
+# MARK: step by step guidance
+
+from openclicky_linux import guided  # noqa: E402
+
+
+class ScriptedModel:
+    """Answers in turn, recording each question."""
+
+    def __init__(self, desktop: FakeDesktop, answers: list[str]) -> None:
+        self.answers = list(answers)
+        desktop.ask = self.ask  # type: ignore[method-assign]
+        self.desktop = desktop
+
+    def ask(self, question, screenshot, conversation):
+        self.desktop.asked.append(question)
+        return self.answers.pop(0)
+
+
+def guided_setup(answers):
+    desktop, pointer = FakeDesktop(), FakePointer()
+    ScriptedModel(desktop, answers)
+    timers: list = []
+    host = desktop.host()
+    # Timers keep their delay here, so a test can tell the settle wait from the idle timeout.
+    host.schedule = lambda seconds, action: timers.append((seconds, action))
+    asking = AskController(host, pointer)
+    return desktop, pointer, asking, timers
+
+
+def run_background(desktop, timers, only_delay=None):
+    """Runs the timers (all, or only those with `only_delay`) and the background work they start."""
+    while True:
+        ready = [timer for timer in timers if only_delay is None or timer[0] == only_delay or timer[0] == 0.15]
+        if not ready and not desktop.background:
+            return
+        for timer in ready:
+            timers.remove(timer)
+            timer[1]()
+        while desktop.background:
+            work, done = desktop.background.pop(0)
+            done(work())
+
+
+def test_a_guide_waits_for_a_click_then_asks_for_the_next_step_with_the_goal():
+    desktop, pointer, asking, timers = guided_setup([
+        "[POINT:100,40:settings] open settings first. [NEXT]",
+        "[POINT:300,200:dark mode] now tick dark mode. [ next ]",
+        "[POINT:none] that's it, dark mode is on.",
+    ])
+    asking.submit("how do i turn on dark mode?")
+    run_background(desktop, timers, only_delay=0.15)
+    assert asking.is_waiting_for_step
+    # The marker is never shown.
+    assert pointer.calls[-1] == ("caption", "open settings first.", True)
+    # Typing alone is not a step.
+    asking.step_input(guided.OTHER_KEY)
+    assert not [timer for timer in timers if timer[0] != guided.IDLE_SECONDS_BEFORE_GIVING_UP]
+    asking.step_input(guided.CLICK)
+    run_background(desktop, timers, only_delay=guided.SETTLE_SECONDS_AFTER_CLICK)
+    assert desktop.asked[1] == guided.next_step_request("how do i turn on dark mode?")
+    assert pointer.calls[-1] == ("caption", "now tick dark mode.", True)
+    asking.step_input(guided.CLICK)
+    run_background(desktop, timers, only_delay=guided.SETTLE_SECONDS_AFTER_CLICK)
+    assert pointer.calls[-1] == ("caption", "that's it, dark mode is on.", True)
+    # The last step has no marker: the guide is over, clicks do nothing now.
+    assert not asking.is_waiting_for_step
+    asking.step_input(guided.CLICK)
+    run_background(desktop, timers, only_delay=guided.SETTLE_SECONDS_AFTER_CLICK)
+    assert len(desktop.asked) == 3
+
+
+def test_a_second_quick_click_is_the_same_step():
+    desktop, _pointer, asking, timers = guided_setup(["open the menu. [NEXT]", "done."])
+    asking.submit("how?")
+    run_background(desktop, timers, only_delay=0.15)
+    asking.step_input(guided.CLICK)
+    asking.step_input(guided.CLICK)  # the menu, then its item
+    run_background(desktop, timers, only_delay=guided.SETTLE_SECONDS_AFTER_CLICK)
+    assert len(desktop.asked) == 2
+
+
+def test_typing_after_a_click_waits_for_quiet():
+    desktop, _pointer, asking, timers = guided_setup(["click the address field and type it. [NEXT]", "done."])
+    asking.submit("how?")
+    run_background(desktop, timers, only_delay=0.15)
+    asking.step_input(guided.CLICK)
+    asking.step_input(guided.OTHER_KEY)
+    # Only the typing wait counts now; the click's shorter wait is superseded.
+    run_background(desktop, timers, only_delay=guided.SETTLE_SECONDS_AFTER_CLICK)
+    assert len(desktop.asked) == 1
+    run_background(desktop, timers, only_delay=guided.SETTLE_SECONDS_WHILE_TYPING)
+    assert len(desktop.asked) == 2
+
+
+def test_return_or_tab_finishes_a_typing_step():
+    desktop, _pointer, asking, timers = guided_setup(["type your name, then press return. [NEXT]", "done."])
+    asking.submit("how?")
+    run_background(desktop, timers, only_delay=0.15)
+    asking.step_input(guided.STEP_KEY)
+    run_background(desktop, timers, only_delay=guided.SETTLE_SECONDS_AFTER_STEP_KEY)
+    assert len(desktop.asked) == 2
+
+
+def test_esc_ends_the_guide():
+    desktop, pointer, asking, timers = guided_setup(["open settings. [NEXT]", "never asked"])
+    asking.submit("how?")
+    run_background(desktop, timers, only_delay=0.15)
+    asking.caption_finished()  # the caption may be gone already; the guide still waits
+    assert asking.is_waiting_for_step
+    assert asking.escape()
+    assert not asking.is_waiting_for_step
+    asking.step_input(guided.CLICK)
+    run_background(desktop, timers)
+    assert len(desktop.asked) == 1
+
+
+def test_esc_as_a_step_input_ends_the_guide_too():
+    desktop, _pointer, asking, timers = guided_setup(["open settings. [NEXT]"])
+    asking.submit("how?")
+    run_background(desktop, timers, only_delay=0.15)
+    asking.step_input(guided.ESCAPE)
+    assert not asking.is_waiting_for_step
+
+
+def test_two_minutes_of_nothing_ends_the_guide():
+    desktop, _pointer, asking, timers = guided_setup(["open settings. [NEXT]"])
+    asking.submit("how?")
+    run_background(desktop, timers, only_delay=0.15)
+    run_background(desktop, timers, only_delay=guided.IDLE_SECONDS_BEFORE_GIVING_UP)
+    assert not asking.is_waiting_for_step
+
+
+def test_a_new_question_ends_the_guide_and_starts_afresh():
+    desktop, _pointer, asking, timers = guided_setup(["open settings. [NEXT]", "paris."])
+    asking.submit("how do i turn on dark mode?")
+    run_background(desktop, timers, only_delay=0.15)
+    asking.submit("what is the capital of france?")
+    run_background(desktop, timers, only_delay=0.15)
+    assert not asking.is_waiting_for_step
+    assert asking.guide_goal == "what is the capital of france?"
+
+
+def test_a_runaway_guide_stops_after_fifteen_steps():
+    desktop, _pointer, asking, timers = guided_setup([f"step {number}. [NEXT]" for number in range(1, 30)])
+    asking.submit("how?")
+    run_background(desktop, timers, only_delay=0.15)
+    for _ in range(40):
+        asking.step_input(guided.CLICK)
+        run_background(desktop, timers, only_delay=guided.SETTLE_SECONDS_AFTER_CLICK)
+    assert len(desktop.asked) == guided.MAXIMUM_STEPS
+    assert not asking.is_waiting_for_step
+
+
+# The Mac's GuidedStepsTests, ported.
+
+def test_the_marker_is_found_however_it_is_written():
+    assert guided.contains_marker("click the paperclip. [NEXT]")
+    assert guided.contains_marker("click the paperclip. [ next ]")
+    assert not guided.contains_marker("that's the next button.")
+    assert guided.removing_markers("[POINT:1,2:clip] click the paperclip. [NEXT]\n") == "[POINT:1,2:clip] click the paperclip."
+
+
+def test_a_trailing_point_tag_before_the_marker_still_points():
+    from openclicky_linux.pointing import parse_pointing
+    result = parse_pointing(guided.removing_markers("click the paperclip at the top [POINT:612,88:attach] [NEXT]"))
+    assert (result.x, result.y, result.text) == (612, 88, "click the paperclip at the top")
+
+
+def test_click_return_or_tab_finish_a_step_typing_alone_does_not_esc_ends():
+    assert guided.reaction(guided.CLICK, False) == guided.Reaction("ask for next step", guided.SETTLE_SECONDS_AFTER_CLICK)
+    assert guided.reaction(guided.STEP_KEY, False) == guided.Reaction("ask for next step", guided.SETTLE_SECONDS_AFTER_STEP_KEY)
+    assert guided.reaction(guided.OTHER_KEY, False) == guided.Reaction("ignore")
+    assert guided.reaction(guided.OTHER_KEY, True) == guided.Reaction("postpone", guided.SETTLE_SECONDS_WHILE_TYPING)
+    assert guided.reaction(guided.ESCAPE, True) == guided.Reaction("end guide")
+
+
+def test_the_next_step_request_repeats_the_goal():
+    request = guided.next_step_request("how do i attach a file")
+    assert request.startswith(guided.NEXT_STEP_REQUEST_OPENING)
+    assert "how do i attach a file" in request
+    assert "—" not in request
+
+
+def test_the_ask_prompt_explains_the_marker():
+    from openclicky_linux.ask import SYSTEM_PROMPT
+    assert "[NEXT]" in SYSTEM_PROMPT and guided.NEXT_STEP_REQUEST_OPENING in SYSTEM_PROMPT

@@ -5,7 +5,8 @@
   sentence case). A small orb at the bottom of the screen shows each step.
 - **Ask:** tap **left ctrl twice**, type a question about what is on your screen, press Enter. The
   orange pointer beside your mouse answers in a caption and flies to what it is talking about.
-  Esc dismisses the answer. Follow-ups remember the last ten exchanges.
+  Esc dismisses the answer. Follow-ups remember the last ten exchanges. A how-to with several steps
+  is guided **one step at a time**: the next step comes after you click or press Return.
 - **The pointer** follows the mouse always, only while the mouse moves, only after you **shake the
   mouse**, or only while answering (Settings → Show the pointer).
 - **Settings and the tray icon:** Ask…, Settings…, Quit.
@@ -69,7 +70,9 @@ edit them there, or by hand).
 The X11 tests start their own Xvfb display (install `xvfb`), so no keystroke reaches your desktop;
 they are skipped without it. They run the real app wiring end to end with XTEST pressing keys: a
 take lands in a GTK text box; left ctrl twice opens the ask box, a typed question goes out with a
-real screenshot to a stand-in model, and the pointer lands on the button it named; Settings saves
+real screenshot to a stand-in model, and the pointer lands on the button it named; a guide moves on
+only when the test clicks where the pointer points, and the pointer stays above the dialog that
+click opened; Settings saves
 into shell.json; the pointer is checked to be cut to its triangle and click-through.
 A shake with the real mouse wakes a hidden pointer. `OPENCLICKY_SCREENSHOT_DIR=<folder>` keeps
 screenshots of each scenario.
@@ -82,8 +85,9 @@ the Save and Delete buttons and stays put for "what is the capital of france?".
 
 | File | Purpose |
 |---|---|
-| `companion.py` | Asking by text, one question at a time: the ask box, the screenshot, the answer, the pointer's flight and caption; a new question or esc drops an unanswered one. Reaches the desktop only through `AskHost` and `PointerSurface`. |
+| `companion.py` | Asking by text, one question at a time: the ask box, the screenshot, the answer, the pointer's flight and caption; a new question or esc drops an unanswered one. Guided steps: waits for the click or Return, then asks for the next step. Reaches the desktop only through `AskHost` and `PointerSurface`. |
 | `ask.py` | The question + screenshot to a model, in the Mac's order: own Anthropic key → Messages; OpenRouter key → its chat completions; own OpenAI key → chat completions; account → backend `POST /chat`. The Mac's ask prompt, for a read (not spoken) answer. |
+| `guided.py` | Step by step guidance: the [NEXT] marker, which click or key finishes a step and how long to let the screen settle, the "what's next?" request, the prompt section. |
 | `pointing.py` | The `[POINT:x,y:label]` tag (the Mac's parser, ported), screenshot → screen coordinates, the arc and timing of a flight. |
 | `presence.py` | When the following pointer shows: the Mac's `PointerPresence` (always, while moving, after a shake, with its shake detector) ported with its tests, plus "only while answering". |
 | `pointer_view.py` | The pointer (an orange window cut to a triangle with SHAPE, click-through) and its typed-out caption; follows the mouse, flies, comes back. |
@@ -91,14 +95,14 @@ the Save and Delete buttons and stays put for "what is the capital of france?".
 | `screen.py` | The screenshot (whole screen, longest side ≤ 1568 px, PNG, with its scale). |
 | `controller.py` | One take at a time (idle → listening → finishing), the Mac's `DictationTakeController` in small. Reaches the desktop only through `DictationHost`. |
 | `gestures.py` | Hold, tap, double tap, esc and "a shortcut, not a take" from raw key downs and ups, with the Mac's timings. |
-| `x11.py` | The window in front (`_NET_ACTIVE_WINDOW`, `WM_CLASS`), the paste keystroke (XTEST), the listen-only key watcher (RECORD), window shapes (SHAPE). |
+| `x11.py` | The window in front (`_NET_ACTIVE_WINDOW`, `WM_CLASS`), the paste keystroke (XTEST), the listen-only key and click watcher (RECORD), window shapes (SHAPE). |
 | `desktop.py` | GTK 3: the clipboard paste and restore, the orb (a popup window that never takes the focus). |
 | `recorder.py` | 16 kHz mono PCM from `parecord` or `arecord`, wrapped as WAV. |
 | `transcriber.py` | Own OpenAI key → OpenAI; else account → `POST /agent/transcribe`; else a sentence naming what is missing. |
 | `formatter.py` | The Mac's `TakeFormatter.formatLocally`, ported: shortcuts, fillers, dictionary, sentence case. |
 | `config.py`, `space.py` | `~/.openclicky/shell.json` (read, and saved without touching other keys, mode 600) and the dictionary/shortcut files. |
 
-Not yet: spoken answers and asking by voice, guided steps, more than one screen (the whole X screen
+Not yet: spoken answers and asking by voice, more than one screen (the whole X screen
 is one image), spoken numbers as digits, the model clean-up, history, the "is there a text box?"
 check (AT-SPI), offline engines (Parakeet runs on Linux through sherpa-onnx), Wayland.
 
@@ -116,12 +120,14 @@ microphone, nothing on your screen):
 ```bash
 cd linux
 python3 -m venv --system-site-packages .venv && .venv/bin/pip install -e '.[test]'
-.venv/bin/python -m pytest             # 84 tests; the X11 ones start their own Xvfb
+.venv/bin/python -m pytest             # 99 tests; the X11 ones start their own Xvfb
 OPENCLICKY_SCREENSHOT_DIR=/tmp/shots .venv/bin/python -m pytest tests/test_x11.py   # and look at /tmp/shots
 scripts/make-doc-screenshots.sh        # remakes docs/media/linux/ (a scripted answer; --live uses your key)
 ```
 
-`OPENCLICKY_LIVE=1` adds the one test that spends a real key (three requests about a test window).
+`OPENCLICKY_LIVE=1` adds the two tests that spend a real key (about six requests, all about test
+windows on the private display): pointing at the right button, and a guide from a Settings button to
+a ticked checkbox, with the test clicking wherever the pointer points.
 
 **Where each piece comes from.** Most of the logic is a port of a Mac file, kept close to it on
 purpose (the same names, numbers and sentences) so the two can be compared side by side and fixed
@@ -134,6 +140,7 @@ together:
 | `formatter.py` | `Dictation/TakeFormatter.swift` (`formatLocally`) | fillers, dictionary (longest alias first), whole-take shortcuts, sentence case |
 | `transcriber.py`, `ask.py` | `ProviderRoute.swift`, `ClaudeAPI.swift`, `AnswerProvider.swift` | own key straight to its vendor, never to the backend; the answer order Anthropic → OpenRouter → OpenAI → account; the models |
 | `ask.py` (prompt) | `CompanionManager.companionVoiceResponseSystemPrompt` | its rules and the pointing section, reworded for an answer that is read rather than heard |
+| `guided.py`, guide part of `companion.py` | `GuidedSteps.swift`, `CompanionManager.waitForTheGuidedStepToBeDone` (+ `GuidedStepsTests`, ported) | the [NEXT] marker, the prompt section, settle times (1.5 s after a click, 1.2 s after Return/Tab, 4 s while typing), 120 s idle, 15 steps, the "what's next?" that repeats the goal |
 | `pointing.py` | `CompanionManager.parsePointingCoordinates` | the tag grammar, leading/trailing tags, no recursion on two tags |
 | `presence.py` | `PointerPresence.swift` (+ its tests, ported case for case) | the shake detector's numbers, the 3 s rest |
 | `config.py`, `space.py` | `OpenClickyConfiguration.swift`, `Dictation/DictationSpace.swift` | the same `shell.json` keys (`openaiApiKey`, `anthropicApiKey`, `openRouterApiKey`, `token`, `backendUrl`, `language`, `answerModels`) and dictionary files; Linux adds only `linuxDictationKey` and `linuxPointer` |

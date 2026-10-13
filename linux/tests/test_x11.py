@@ -130,3 +130,27 @@ def test_live_a_real_model_points_at_the_right_button(private_display):
     assert results[0]["mode"] == "pointing" and lands_on(results[0]["pointer"], boxes["Save"]), results[0]
     assert results[1]["mode"] == "pointing" and lands_on(results[1]["pointer"], boxes["Delete note"]), results[1]
     assert results[2]["mode"] == "following" and "paris" in results[2]["answer"].lower(), results[2]
+
+
+def test_a_guide_waits_for_each_click_on_the_real_screen(private_display):
+    outcome = run_scenario("guided_steps", private_display)
+    steps = outcome["steps"]
+    assert [step["caption"] for step in steps] == [
+        "open settings first.", "now tick dark mode.", "that's it, dark mode is on."]
+    assert [step["waiting"] for step in steps] == [True, True, False]
+    # The person's clicks did the work: the dialog opened and dark mode got ticked.
+    assert outcome["dialog_open"] and outcome["dark_mode_on"]
+    # Above the dialog that opened, not hidden behind it.
+    assert all(step["pointer_on_top"] for step in steps)
+    assert outcome["questions"][0] == "how do i turn on dark mode?"
+    assert all(question.startswith("(i did that step.") and "how do i turn on dark mode?" in question
+               for question in outcome["questions"][1:])
+
+
+@pytest.mark.skipif(os.environ.get("OPENCLICKY_LIVE") != "1", reason="live: spends the person's own key; set OPENCLICKY_LIVE=1")
+def test_live_a_real_model_guides_step_by_step(private_display):
+    """A real model guides through opening a dialog and ticking a box; the test clicks wherever the
+    pointer points. About three requests."""
+    outcome = run_scenario("guided_steps", private_display, openclicky_home=Path.home() / ".openclicky")
+    assert outcome["dark_mode_on"], outcome
+    assert outcome["steps"][-1]["waiting"] is False, outcome

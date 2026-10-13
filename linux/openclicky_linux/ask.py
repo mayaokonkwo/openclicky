@@ -17,6 +17,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
+from . import guided
 from .config import LinuxSettings
 
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
@@ -58,6 +59,8 @@ examples:
 - user asks how to open a new tab in firefox: "[POINT:1180,40:new tab] that plus sign at the end of your tabs opens a new one."
 - user asks what html is: "[POINT:none] html stands for hypertext markup language, it's basically the skeleton of every web page."
 """
+
+SYSTEM_PROMPT += guided.PROMPT_SECTION
 
 
 class AskError(Exception):

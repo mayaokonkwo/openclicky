@@ -156,6 +156,8 @@ def wire_up(dictation_key: str, start_recording: Callable[[], Any], transcribe: 
         on_other_key_down=lambda is_escape: deliver(recognizer.other_key_down(is_escape)),
         on_composer_key=lambda is_down, at_seconds: deliver(
             recognizer.composer_key_down(at_seconds) if is_down else recognizer.composer_key_up(at_seconds)),
+        # Clicks and keys, for a guided step waiting to be done (ignored unless one waits).
+        on_step_input=lambda kind: GLib.idle_add(lambda: (asking.step_input(kind), False)[1]),
         display_name=display_name,
     )
     listener_holder["listener"] = listener

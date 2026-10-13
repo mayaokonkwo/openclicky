@@ -33,6 +33,10 @@ CAPTION_MAX_WIDTH = 300
 CAPTION_TYPING_MILLISECONDS = 30
 FOLLOW_INTERVAL_MILLISECONDS = 33
 FLIGHT_FRAME_MILLISECONDS = 16
+# A window opened or raised after the pointer (a dialog a guided step opened) would cover it: while
+# it shows, the pointer and its caption raise themselves about twice a second, and at once whenever
+# they fly or a caption appears.
+RAISE_EVERY_FOLLOW_TICKS = 15
 
 _CAPTION_CSS = b"""
 .openclicky-pointer { background-color: #f0452b; }
@@ -100,6 +104,7 @@ class PointerView:
         self.position = self._follow_target()
         self._move_triangle()
         self._apply_presence()
+        self._ticks_since_raise = 0
         GLib.timeout_add(FOLLOW_INTERVAL_MILLISECONDS, self._follow_tick)
 
     # MARK: where it is
@@ -137,7 +142,16 @@ class PointerView:
         self.tracker.presence = presence
         self._apply_presence()
 
+    def raise_above_other_windows(self) -> None:
+        for window in (self.triangle, self.caption):
+            if window.get_visible() and window.get_window() is not None:
+                window.get_window().raise_()
+        self._ticks_since_raise = 0
+
     def _follow_tick(self) -> bool:
+        self._ticks_since_raise += 1
+        if self._ticks_since_raise >= RAISE_EVERY_FOLLOW_TICKS:
+            self.raise_above_other_windows()
         mouse_x, mouse_y = self.mouse_position()
         self.tracker.update(mouse_x, mouse_y, time.monotonic())
         if self.mode == "following":
@@ -162,6 +176,7 @@ class PointerView:
         start = self.position
         self.mode = "flying"
         self._apply_presence()
+        self.raise_above_other_windows()
         self._flight = (start, destination, time.monotonic(), flight_seconds(start, destination), then)
         GLib.timeout_add(FLIGHT_FRAME_MILLISECONDS, self._flight_tick)
 
@@ -202,6 +217,7 @@ class PointerView:
         self._caption_hold_seconds = hold_seconds
         self.caption.show_all()
         self._apply_presence()
+        self.raise_above_other_windows()
         self._caption_timer = GLib.timeout_add(CAPTION_TYPING_MILLISECONDS, self._type_next_character)
 
     def _type_next_character(self) -> bool:

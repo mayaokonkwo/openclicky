@@ -348,5 +348,112 @@ def scenario_live_questions() -> dict:
     app.listener.stop()
     return {"boxes": boxes, "results": results}
 
+
+# MARK: step by step guidance
+
+def click_at(x: int, y: int) -> None:
+    move_mouse(x, y)
+    pump(0.15)
+    _xtest.fake_input(keyboard, X.ButtonPress, 1)
+    _xtest.fake_input(keyboard, X.ButtonRelease, 1)
+    keyboard.sync()
+
+
+def center_of(widget) -> list[int]:
+    allocation = widget.get_allocation()
+    origin_x, origin_y = widget.get_window().get_origin()[1:3]
+    return [origin_x + allocation.x + allocation.width // 2, origin_y + allocation.y + allocation.height // 2]
+
+
+def app_with_a_settings_dialog():
+    """An app whose Settings button opens a dialog with a Dark mode checkbox and a Close button."""
+    window = Gtk.Window(title="Photos")
+    window.set_default_size(900, 520)
+    layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    toolbar = Gtk.Box(spacing=12)
+    for label in ("Import", "Share"):
+        toolbar.pack_start(Gtk.Button(label=label), False, False, 0)
+    settings_button = Gtk.Button(label="Settings")
+    toolbar.pack_end(settings_button, False, False, 0)
+    layout.pack_start(toolbar, False, False, 0)
+    layout.pack_start(Gtk.Label(label="12 photos"), True, True, 0)
+    window.add(layout)
+    window.move(120, 100)
+    window.show_all()
+
+    dialog = Gtk.Window(title="Photos settings")
+    dialog.set_default_size(360, 200)
+    dialog_layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    dialog_layout.set_border_width(16)
+    dialog_layout.pack_start(Gtk.CheckButton(label="Show file names"), False, False, 0)
+    dark_mode = Gtk.CheckButton(label="Dark mode")
+    dialog_layout.pack_start(dark_mode, False, False, 0)
+    close = Gtk.Button(label="Close")
+    dialog_layout.pack_end(close, False, False, 0)
+    dialog.add(dialog_layout)
+    dialog.move(500, 260)
+    settings_button.connect("clicked", lambda _button: (dialog.show_all(), dialog.present()))
+    close.connect("clicked", lambda _button: dialog.hide())
+    pump(0.6)
+    return window, settings_button, dialog, dark_mode
+
+
+def scenario_guided_steps() -> dict:
+    window, settings_button, dialog, dark_mode = app_with_a_settings_dialog()
+    live = os.environ.get("OPENCLICKY_LIVE") == "1"
+    questions = []
+
+    def stand_in_model(question, screenshot_taken, conversation):
+        questions.append(question)
+        time.sleep(0.3)
+        if len(questions) == 1:
+            x, y = center_of(settings_button)
+            return f"[POINT:{x},{y}:settings] open settings first. [NEXT]"
+        if len(questions) == 2:
+            x, y = center_of(dark_mode)
+            return f"[POINT:{x - 30},{y}:dark mode] now tick dark mode. [NEXT]"
+        return "[POINT:none] that's it, dark mode is on."
+
+    if live:
+        from openclicky_linux.ask import ask as ask_model
+        from openclicky_linux.config import load_settings
+
+        def model(question, screenshot_taken, conversation):
+            questions.append(question)
+            return ask_model(question, screenshot_taken, conversation, load_settings())
+    else:
+        model = stand_in_model
+
+    app = wire_up("Control_R", start_recording=StandInRecording, transcribe=lambda _wav: "", ask=model)
+    app.listener.start()
+    move_mouse(300, 400)
+    pump(0.3)
+    steps = []
+    app.asking.submit("how do i turn on dark mode?")
+    for answers_so_far in range(1, 7):
+        # Wait for this step's answer (the next question only goes out once the click has settled).
+        pump(60, until=lambda: len(app.asking.conversation.exchanges) >= answers_so_far
+             and not app.asking.is_answering and app.pointer.mode != "flying")
+        pump(1.5)  # the caption finishes typing
+        caption = app.pointer.caption_label.get_text()
+        steps.append({"caption": caption, "mode": app.pointer.mode, "pointer": [round(value) for value in app.pointer.position],
+                      "waiting": app.asking.is_waiting_for_step})
+        screenshot(f"guide-step-{len(steps)}")
+        # The pointer and its caption stay above every window, the dialog a step opened included.
+        stacking = [child.id for child in keyboard.screen().root.query_tree().children]
+        pointer_xid = app.pointer.triangle.get_window().get_xid()
+        others = [dialog.get_window().get_xid()] if dialog.get_window() and dialog.get_visible() else []
+        steps[-1]["pointer_on_top"] = all(stacking.index(pointer_xid) > stacking.index(other)
+                                          for other in others if other in stacking)
+        # Do the step the pointer shows (the last one too): click exactly where its tip is.
+        if steps[-1]["mode"] == "pointing":
+            click_at(*steps[-1]["pointer"])
+            pump(0.5)
+        if not app.asking.is_waiting_for_step:
+            break
+    app.listener.stop()
+    return {"steps": steps, "questions": questions, "dark_mode_on": dark_mode.get_active(),
+            "dialog_open": dialog.get_visible(), "settings_center": center_of(settings_button)}
+
 if __name__ == "__main__":
     print(json.dumps(globals()[f"scenario_{sys.argv[1]}"]()))

@@ -4,9 +4,9 @@ An early Linux client for OpenClicky. It runs against the same backend contract 
 `~/.openclicky` files as the Mac app, but is its own small program: Python and GTK 3 on X11, under
 [`linux/`](../linux). Everything in the main README is about the Mac app; this page is the Linux one.
 
-What it does today: **ask about your screen by text** (the pointer answers and points), **the
-pointer** itself (including shake to appear), **dictation** (untested with a real microphone so
-far), **Settings** and a **tray icon**. Not yet: spoken answers, asking by voice, guided steps,
+What it does today: **ask about your screen by text** (the pointer answers and points), **step by
+step guidance**, **the pointer** itself (including shake to appear), **dictation** (untested with a
+real microphone so far), **Settings** and a **tray icon**. Not yet: spoken answers, asking by voice,
 more than one monitor, Wayland.
 
 ## Ask about your screen
@@ -19,12 +19,26 @@ Press **Enter**. The box closes, a screenshot of your screen goes with the quest
 pointer beside your mouse says "thinking…". When the answer is about something on screen, the
 pointer flies to it and types the answer beside itself:
 
-![The pointer on the notes app's Save button, with the caption "that save button up top will do it."](media/linux/ask-answer.png)
+![The pointer on the notes app's Save button, with a caption saying the save button will do it](media/linux/ask-answer.png)
 
 *A real answer (Claude Sonnet 4.6 through OpenRouter) about the window on screen; the pointer's tip
 is on the Save button the answer names.* A question that is not about the screen ("what is the
 capital of france?") is answered by the mouse without pointing. **Esc** dismisses an answer and the
 pointer comes back to the mouse. Follow-ups remember the last ten exchanges.
+
+## Step by step
+
+Ask how to do something that takes several steps ("how do i turn on dark mode?") and you get one
+step at a time: the pointer shows the first one and waits. Do it — a click, or Return or Tab after
+typing — and a moment later, once the menu or dialog has opened, OpenClicky looks at your screen
+again and shows the next step, until the last one:
+
+![A Photos settings dialog opened by the first step, with the pointer on its Dark mode checkbox and the caption "check that dark mode checkbox."](media/linux/guided-step.png)
+
+*The second step of a real guide: the first ("open settings first.") pointed at the Settings button,
+whose click opened this dialog.* If you click something else, the next step helps you back. **Esc**,
+a new question, two minutes without a click, or fifteen steps end the guide. Steps work the way they
+do in the Mac app.
 
 ## The pointer
 
@@ -116,8 +130,9 @@ have one; GNOME needs an extension); without one, the shortcuts still work and S
 - A question sends a screenshot of **your whole screen** to whoever answers it: keep anything
   private out of sight before you ask.
 - Dictation sends only the audio recorded while you hold the key.
-- Nothing is recorded or sent otherwise: the key watcher only notices key presses, and the pointer
-  only reads where your mouse is.
+- Nothing is recorded or sent otherwise: the watcher only notices key presses and clicks (it acts on
+  clicks only while a guide waits for a step), and the pointer only reads where your mouse is.
+- A guide sends a fresh screenshot after each step you do, until it ends.
 - Keys live in `~/.openclicky/shell.json`, readable by your user only.
 
 ## When something does not work

@@ -155,6 +155,45 @@ def notes_window() -> tuple[Gtk.Window, Gtk.TextView, dict[str, Gtk.Button]]:
     return window, text, buttons
 
 
+def center_of(widget: Gtk.Widget) -> list[int]:
+    allocation = widget.get_allocation()
+    origin_x, origin_y = widget.get_window().get_origin()[1:3]
+    return [origin_x + allocation.x + allocation.width // 2, origin_y + allocation.y + allocation.height // 2]
+
+
+def photos_window():
+    """A photos app whose Settings button opens a small dialog with a Dark mode checkbox."""
+    window = Gtk.Window(title="Photos")
+    window.set_icon_name("image-x-generic")
+    window.set_default_size(760, 440)
+    layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    layout.set_border_width(8)
+    toolbar = Gtk.Box(spacing=8)
+    for label in ("Import", "Share"):
+        toolbar.pack_start(Gtk.Button(label=label), False, False, 0)
+    settings_button = Gtk.Button(label="Settings")
+    toolbar.pack_end(settings_button, False, False, 0)
+    layout.pack_start(toolbar, False, False, 0)
+    layout.pack_start(Gtk.Label(label="12 photos"), True, True, 0)
+    window.add(layout)
+    window.move(260, 150)
+    window.show_all()
+    dialog = Gtk.Window(title="Photos settings")
+    dialog.set_icon_name("image-x-generic")
+    dialog.set_transient_for(window)
+    dialog.set_default_size(320, 160)
+    dialog_layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    dialog_layout.set_border_width(16)
+    dialog_layout.pack_start(Gtk.CheckButton(label="Show file names"), False, False, 0)
+    dark_mode = Gtk.CheckButton(label="Dark mode")
+    dialog_layout.pack_start(dark_mode, False, False, 0)
+    dialog.add(dialog_layout)
+    dialog.move(480, 300)
+    settings_button.connect("clicked", lambda _button: (dialog.show_all(), dialog.present()))
+    pump(1.0)
+    return window, settings_button, dialog, dark_mode
+
+
 class StandInRecording:
     def stop(self) -> bytes:
         return b"\x01\x00" * SAMPLE_RATE
@@ -225,8 +264,33 @@ def main() -> int:
     pump(0.6)
     save_crop("dictation-done", left - 24, top - 24, right + 24, bottom + 120)
 
-    # 4. Settings, with example keys (never real ones), on its own.
+    # 4. Step by step: "how do i turn on dark mode?" in an app whose Settings button opens a dialog.
     window.hide()
+    photos, photos_settings, dialog, dark_mode = photos_window()
+    if not arguments.live:
+        scripted_steps = iter([
+            lambda: "[POINT:{}:settings] open settings first. [NEXT]".format(",".join(map(str, center_of(photos_settings)))),
+            lambda: "[POINT:{},{}:dark mode] now tick dark mode.".format(center_of(dark_mode)[0] - 34, center_of(dark_mode)[1]),
+        ])
+        app.asking.host.ask = lambda question, screenshot, conversation: (time.sleep(0.4), next(scripted_steps)())[1]
+    move_mouse(300, 560)
+    pump(0.3)
+    answers_before = len(app.asking.conversation.exchanges)
+    app.asking.submit("how do i turn on dark mode?")
+    pump(60, until=lambda: len(app.asking.conversation.exchanges) > answers_before and app.pointer.mode != "flying")
+    pump(2.0)
+    click(*[round(value) for value in app.pointer.position])  # do the step where the pointer shows it
+    pump(60, until=lambda: len(app.asking.conversation.exchanges) > answers_before + 1 and app.pointer.mode != "flying")
+    pump(3.0)
+    print(f"guide: {[answer for _question, answer in app.asking.conversation.exchanges[answers_before:]]}")
+    photos_left, photos_top, photos_right, photos_bottom = frame_of(photos)
+    caption_right, caption_bottom = frame_of(app.pointer.caption)[2:]
+    save_crop("guided-step", photos_left - 24, photos_top - 24, max(photos_right, caption_right) + 24, max(photos_bottom, caption_bottom) + 24)
+    app.asking.escape()
+    dialog.hide()
+    photos.hide()
+
+    # 5. Settings, with example keys (never real ones), on its own.
     app.settings_window.show()
     pump(1.0)
     settings = app.settings_window

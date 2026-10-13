@@ -138,12 +138,16 @@ def shape_window(window_id: int, outline_rows: list[tuple[int, int, int, int]] |
 
 class DictationKeyListener:
     """Calls `on_dictation_key(is_down, at_seconds)`, `on_composer_key(is_down, at_seconds)` and
-    `on_other_key_down(is_escape)` from its own thread for every key press and release on the X server."""
+    `on_other_key_down(is_escape)` from its own thread for every key press and release on the X
+    server, and `on_step_input(kind)` for every left click and key press other than the dictation
+    and composer keys ("click", "step key" for Return, keypad Enter and Tab, "escape", "other key"):
+    what a guided step waits for."""
 
     def __init__(self, dictation_key_name: str, on_dictation_key: Callable[[bool, float], None],
                  on_other_key_down: Callable[[bool], None], display_name: str | None = None,
                  composer_key_name: str | None = "Control_L",
-                 on_composer_key: Callable[[bool, float], None] = lambda _is_down, _at_seconds: None) -> None:
+                 on_composer_key: Callable[[bool, float], None] = lambda _is_down, _at_seconds: None,
+                 on_step_input: Callable[[str], None] = lambda _kind: None) -> None:
         self._control_display = xdisplay.Display(display_name)
         self._record_display = xdisplay.Display(display_name)
         if not self._record_display.has_extension("RECORD"):
@@ -155,6 +159,8 @@ class DictationKeyListener:
         if not self.dictation_keycodes:
             raise ValueError(f"no key on this keyboard produces {dictation_key_name}")
         self.escape_keycodes = self._keycodes_for(XK.XK_Escape)
+        self.step_keycodes = set().union(*(self._keycodes_for(keysym) for keysym in (XK.XK_Return, XK.XK_KP_Enter, XK.XK_Tab)))
+        self._on_step_input = on_step_input
         # The key tapped twice for the ask box; never the dictation key itself.
         composer_keysym = XK.string_to_keysym(composer_key_name) if composer_key_name else X.NoSymbol
         self.composer_keycodes = (self._keycodes_for(composer_keysym) - self.dictation_keycodes) if composer_keysym != X.NoSymbol else set()
@@ -176,7 +182,7 @@ class DictationKeyListener:
         self._context = self._record_display.record_create_context(0, [record.AllClients], [{
             "core_requests": (0, 0), "core_replies": (0, 0),
             "ext_requests": (0, 0, 0, 0), "ext_replies": (0, 0, 0, 0),
-            "delivered_events": (0, 0), "device_events": (X.KeyPress, X.KeyRelease),
+            "delivered_events": (0, 0), "device_events": (X.KeyPress, X.ButtonRelease),
             "errors": (0, 0), "client_started": False, "client_died": False,
         }])
         self._thread = threading.Thread(target=self._record_display.record_enable_context,
@@ -199,7 +205,14 @@ class DictationKeyListener:
         data = reply.data
         while data:
             event, data = rq.EventField(None).parse_binary_value(data, self._record_display.display, None, None)
-            if event.type not in (X.KeyPress, X.KeyRelease) or time.monotonic() < self._ignore_until:
+            if time.monotonic() < self._ignore_until:
+                continue
+            if event.type == X.ButtonRelease:
+                # The left button only (1); the wheel (4–7) and the other buttons are not a step.
+                if event.detail == 1:
+                    self._on_step_input("click")
+                continue
+            if event.type not in (X.KeyPress, X.KeyRelease):
                 continue
             is_down = event.type == X.KeyPress
             if event.detail in self.dictation_keycodes:
@@ -207,4 +220,6 @@ class DictationKeyListener:
             elif event.detail in self.composer_keycodes:
                 self._on_composer_key(is_down, event.time / 1000.0)
             elif is_down:
-                self._on_other_key_down(event.detail in self.escape_keycodes)
+                is_escape = event.detail in self.escape_keycodes
+                self._on_other_key_down(is_escape)
+                self._on_step_input("escape" if is_escape else "step key" if event.detail in self.step_keycodes else "other key")
